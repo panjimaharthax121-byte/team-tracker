@@ -1,0 +1,1896 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Tracker — Tracking Kerjaan Tim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f5f7fb;
+    --bg-card: #ffffff;
+    --bg-col: #eef1f6;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --text-light: #94a3b8;
+    --primary: #3b82f6;
+    --primary-dark: #2563eb;
+    --primary-light: #dbeafe;
+    --success: #10b981;
+    --success-light: #d1fae5;
+    --warning: #f59e0b;
+    --warning-light: #fef3c7;
+    --danger: #ef4444;
+    --danger-light: #fee2e2;
+    --purple: #8b5cf6;
+    --purple-light: #ede9fe;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.12);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --radius-lg: 14px;
+  }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; }
+  input, textarea, select { font-family: inherit; font-size: 14px; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+  /* === LAYOUT === */
+  .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+  .header {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .header-brand-icon {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--primary), var(--purple));
+    border-radius: 8px;
+    display: grid; place-items: center;
+    color: white;
+    font-size: 18px;
+  }
+  .header-controls {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    flex: 1;
+  }
+  .header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .user-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-col);
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .user-badge-avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .admin-pill {
+    background: var(--warning-light);
+    color: #92400e;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  /* === BUTTONS === */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid transparent;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-secondary { background: var(--bg-col); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { background: #e1e7ef; }
+  .btn-ghost { background: transparent; color: var(--text-muted); }
+  .btn-ghost:hover { background: var(--bg-col); color: var(--text); }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  .btn-icon {
+    width: 32px; height: 32px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+  }
+
+  /* === FORMS === */
+  .input, .select, .textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: white;
+    font-size: 14px;
+    transition: border-color .15s;
+  }
+  .input:focus, .select:focus, .textarea:focus {
+    border-color: var(--primary);
+    outline-offset: 0;
+  }
+  .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+  .label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .form-group { margin-bottom: 14px; }
+
+  /* === FILTER CHIPS === */
+  .chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg-col);
+    color: var(--text-muted);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .chip:hover { background: #e1e7ef; }
+  .chip.active {
+    background: var(--primary);
+    color: white;
+  }
+  .chip-avatar {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: white;
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  /* === DATE PICKER === */
+  .date-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+  }
+  .date-nav {
+    width: 28px; height: 28px;
+    border-radius: var(--radius-sm);
+    display: grid; place-items: center;
+    color: var(--text-muted);
+  }
+  .date-nav:hover { background: var(--bg-col); }
+  .date-input {
+    border: none;
+    padding: 4px 8px;
+    font-size: 13px;
+    font-weight: 500;
+    background: transparent;
+  }
+  .date-today-btn {
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .date-today-btn:hover { background: var(--primary-light); }
+
+  /* === KANBAN === */
+  .kanban {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    padding: 20px;
+    flex: 1;
+    overflow: auto;
+  }
+  .kanban-col {
+    background: var(--bg-col);
+    border-radius: var(--radius-lg);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    transition: background .15s;
+  }
+  .kanban-col.drag-over {
+    background: #dbeafe;
+    outline: 2px dashed var(--primary);
+    outline-offset: -2px;
+  }
+  .kanban-col-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+  }
+  .kanban-col-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .kanban-col-icon {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+  .col-todo .kanban-col-icon { background: var(--text-light); }
+  .col-proses .kanban-col-icon { background: var(--warning); }
+  .col-done .kanban-col-icon { background: var(--success); }
+  .kanban-col-count {
+    background: white;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .kanban-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+  }
+  .kanban-empty {
+    text-align: center;
+    color: var(--text-light);
+    padding: 24px 12px;
+    font-size: 12px;
+    font-style: italic;
+  }
+  .kanban-add-btn {
+    padding: 10px;
+    border-radius: var(--radius);
+    border: 1px dashed var(--border-strong);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: center;
+    margin-top: 4px;
+    background: transparent;
+  }
+  .kanban-add-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: white;
+  }
+
+  /* === TASK CARD === */
+  .task-card {
+    background: white;
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+    cursor: grab;
+    transition: all .15s;
+    position: relative;
+  }
+  .task-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .task-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+  }
+  .task-card.col-done { border-left: 3px solid var(--success); }
+  .task-card.col-proses { border-left: 3px solid var(--warning); }
+  .task-card-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    word-break: break-word;
+  }
+  .task-card.col-done .task-card-title {
+    text-decoration: line-through;
+    color: var(--text-muted);
+  }
+  .task-card-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    word-break: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .task-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .task-card-assignee {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 500;
+  }
+  .task-card-comments-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--primary);
+    font-weight: 600;
+  }
+  .avatar {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .avatar-lg { width: 36px; height: 36px; font-size: 14px; }
+
+  /* === MODAL === */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 200;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    animation: fadeIn .15s ease-out;
+  }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slideUp { from { transform: translateY(10px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+  .modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 520px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    animation: slideUp .2s ease-out;
+  }
+  .modal-lg { max-width: 720px; }
+  .modal-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-title {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .modal-close {
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    display: grid; place-items: center;
+    font-size: 18px;
+  }
+  .modal-close:hover { background: var(--bg-col); }
+
+  /* === TASK MODAL === */
+  .task-meta-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    background: var(--bg-col);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .task-meta-row > div { display: flex; align-items: center; gap: 6px; }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .status-todo { background: #e2e8f0; color: #475569; }
+  .status-proses { background: var(--warning-light); color: #92400e; }
+  .status-done { background: var(--success-light); color: #065f46; }
+
+  /* === COMMENTS === */
+  .comments-section { margin-top: 20px; }
+  .comments-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 10px;
+  }
+  .comment {
+    display: flex;
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+  }
+  .comment:first-of-type { border-top: 0; }
+  .comment-content { flex: 1; }
+  .comment-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .comment-author { font-weight: 600; font-size: 13px; }
+  .comment-time { font-size: 11px; color: var(--text-light); }
+  .comment-text {
+    font-size: 13px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .comment-delete {
+    color: var(--text-light);
+    font-size: 11px;
+    padding: 2px 6px;
+    margin-left: auto;
+  }
+  .comment-delete:hover { color: var(--danger); }
+  .comment-form {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .comment-form .textarea { min-height: 60px; font-size: 13px; }
+
+  /* === MEMBER LIST === */
+  .member-list { display: flex; flex-direction: column; gap: 8px; }
+  .member-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-col);
+    border-radius: var(--radius-sm);
+  }
+  .member-info { flex: 1; min-width: 0; }
+  .member-name { font-weight: 600; font-size: 14px; }
+  .member-meta { font-size: 11px; color: var(--text-muted); }
+  .member-actions { display: flex; gap: 4px; }
+
+  /* === SETUP WIZARD === */
+  .setup-shell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+    background: linear-gradient(135deg, #f0f4ff, #fef3f8);
+  }
+  .setup-card {
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 680px;
+    padding: 40px;
+    min-width: 0;
+  }
+  .setup-card h1 {
+    font-size: 24px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, var(--primary), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .setup-card p { color: var(--text-muted); margin-bottom: 20px; }
+  .setup-step {
+    background: var(--bg-col);
+    padding: 14px 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .setup-step strong { display: block; margin-bottom: 4px; }
+  .setup-step a { color: var(--primary); font-weight: 500; }
+  .setup-step code {
+    background: white;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre.code-block {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 14px;
+    border-radius: var(--radius-sm);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    overflow-x: auto;
+    margin: 10px 0;
+    line-height: 1.5;
+  }
+  .setup-config-input {
+    width: 100%;
+    min-height: 200px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    resize: vertical;
+  }
+
+  /* === LOADING === */
+  .loader {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .full-loader {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .full-loader .loader { width: 32px; height: 32px; margin-bottom: 12px; }
+
+  /* === TOAST === */
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    background: var(--text);
+    color: white;
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    animation: slideUp .2s ease-out;
+    max-width: 320px;
+  }
+  .toast-success { background: var(--success); }
+  .toast-error { background: var(--danger); }
+
+  /* === EMPTY STATE === */
+  .empty-page {
+    display: grid;
+    place-items: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .empty-page-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+  }
+  .empty-page-title { font-weight: 600; font-size: 16px; margin-bottom: 6px; color: var(--text); }
+
+  /* === RESPONSIVE === */
+  @media (max-width: 900px) {
+    .kanban { grid-template-columns: 1fr; gap: 12px; padding: 12px; }
+    .kanban-col { min-height: 100px; }
+    .header { padding: 10px 12px; gap: 10px; }
+    .header-controls { width: 100%; }
+    .modal { max-width: 100%; max-height: 95vh; }
+    .setup-card { padding: 24px; }
+  }
+  @media (max-width: 600px) {
+    .header-brand-text { display: none; }
+    .user-badge .user-name { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader">
+    <div>
+      <div class="loader"></div>
+      <div style="margin-top:12px">Memuat...</div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root" class="toast-container"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import {
+  getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, deleteDoc,
+  onSnapshot, query, where, orderBy, serverTimestamp, updateDoc, arrayUnion, arrayRemove
+} from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+
+/* =============================================================
+   STATE & STORAGE
+   ============================================================= */
+const STATE = {
+  db: null,
+  auth: null,
+  user: null,            // firebase auth user (anonymous)
+  currentMember: null,   // { id, name, role }
+  members: [],
+  tasks: [],
+  selectedDate: todayStr(),
+  filterMemberId: null,  // null = semua
+  unsubTasks: null,
+  unsubMembers: null,
+};
+
+const LS_KEYS = {
+  FB_CONFIG: 'team_tracker.firebaseConfig.v1',
+  CURRENT_MEMBER: 'team_tracker.currentMember.v1',
+  AUTHED_AT: 'team_tracker.authedAt.v1',
+};
+
+// Password gate — ganti hash di bawah kalau mau ganti password.
+// Generate hash baru: echo -n "passwordbaru" | shasum -a 256
+const PASSWORD_HASH = 'c15888ed9697d91b25c874633375227596db12f1df95ca67d0d5410e7333be82';
+const AUTH_TTL_DAYS = 7;
+
+const AVATAR_COLORS = [
+  '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
+  '#06b6d4', '#ef4444', '#84cc16', '#6366f1', '#f97316',
+];
+
+/* =============================================================
+   UTILS
+   ============================================================= */
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function dateLabel(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  const today = todayStr();
+  const yest = (() => { const t = new Date(); t.setDate(t.getDate() - 1); return [t.getFullYear(), String(t.getMonth()+1).padStart(2,'0'), String(t.getDate()).padStart(2,'0')].join('-'); })();
+  if (dateStr === today) return 'Hari ini';
+  if (dateStr === yest) return 'Kemarin';
+  return dt.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+function shiftDate(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+function timeAgo(date) {
+  if (!date) return '';
+  const d = date instanceof Date ? date : (date.toDate ? date.toDate() : new Date(date));
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 60) return 'baru saja';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m lalu`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}j lalu`;
+  if (sec < 604800) return `${Math.floor(sec / 86400)}h lalu`;
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+}
+function colorFor(name) {
+  const s = String(name || '');
+  let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function initials(name) {
+  const parts = String(name || '?').trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function avatarHtml(name, sizeClass = '') {
+  return `<span class="avatar ${sizeClass}" style="background:${colorFor(name)}">${escapeHtml(initials(name))}</span>`;
+}
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/* =============================================================
+   TOAST
+   ============================================================= */
+function toast(msg, type = '') {
+  const root = document.getElementById('toast-root');
+  const el = document.createElement('div');
+  el.className = `toast ${type ? 'toast-' + type : ''}`;
+  el.textContent = msg;
+  root.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 2500);
+}
+
+/* =============================================================
+   MODAL
+   ============================================================= */
+function showModal(html, opts = {}) {
+  closeModal();
+  const root = document.getElementById('modal-root');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal ${opts.size === 'lg' ? 'modal-lg' : ''}">${html}</div>`;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay && !opts.persistent) closeModal();
+  });
+  root.appendChild(overlay);
+  // Close button binding
+  overlay.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModal));
+  // Focus first input
+  setTimeout(() => {
+    const first = overlay.querySelector('input,textarea,select');
+    if (first) first.focus();
+  }, 100);
+  return overlay;
+}
+function closeModal() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '';
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+/* =============================================================
+   FIREBASE INIT
+   ============================================================= */
+function getStoredConfig() {
+  try { return JSON.parse(localStorage.getItem(LS_KEYS.FB_CONFIG) || 'null'); }
+  catch { return null; }
+}
+function saveConfig(cfg) {
+  localStorage.setItem(LS_KEYS.FB_CONFIG, JSON.stringify(cfg));
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isAuthValid() {
+  const ts = parseInt(localStorage.getItem(LS_KEYS.AUTHED_AT) || '0', 10);
+  if (!ts) return false;
+  const ageMs = Date.now() - ts;
+  return ageMs < AUTH_TTL_DAYS * 24 * 60 * 60 * 1000;
+}
+
+async function bootstrap() {
+  if (!isAuthValid()) {
+    renderPasswordGate();
+    return;
+  }
+  const cfg = getStoredConfig();
+  if (!cfg) {
+    renderSetupWizard();
+    return;
+  }
+  try {
+    const app = initializeApp(cfg);
+    STATE.auth = getAuth(app);
+    STATE.db = getFirestore(app);
+    await signInAnonymously(STATE.auth);
+    onAuthStateChanged(STATE.auth, (user) => {
+      if (user) {
+        STATE.user = user;
+        afterAuth();
+      }
+    });
+  } catch (err) {
+    console.error('Firebase init error', err);
+    document.getElementById('app').innerHTML = `
+      <div class="setup-shell"><div class="setup-card">
+        <h1>Config Firebase salah</h1>
+        <p>Error: ${escapeHtml(err.message)}</p>
+        <button class="btn btn-primary" onclick="localStorage.removeItem('${LS_KEYS.FB_CONFIG}'); location.reload();">Reset & Setup Ulang</button>
+      </div></div>`;
+  }
+}
+
+async function afterAuth() {
+  // Load current member from localStorage
+  const storedMember = localStorage.getItem(LS_KEYS.CURRENT_MEMBER);
+  if (storedMember) {
+    try { STATE.currentMember = JSON.parse(storedMember); } catch {}
+  }
+
+  // Subscribe members
+  subscribeMembers();
+  // Wait for first members snapshot then proceed
+}
+
+function subscribeMembers() {
+  const membersRef = collection(STATE.db, 'members');
+  STATE.unsubMembers = onSnapshot(membersRef, (snap) => {
+    STATE.members = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Refresh currentMember from latest data (role may change)
+    if (STATE.currentMember) {
+      const fresh = STATE.members.find(m => m.id === STATE.currentMember.id);
+      if (fresh) {
+        STATE.currentMember = fresh;
+        localStorage.setItem(LS_KEYS.CURRENT_MEMBER, JSON.stringify(fresh));
+      } else {
+        // Member deleted, force re-login
+        STATE.currentMember = null;
+        localStorage.removeItem(LS_KEYS.CURRENT_MEMBER);
+      }
+    }
+
+    // Decision tree
+    if (STATE.members.length === 0) {
+      renderFirstAdminSetup();
+    } else if (!STATE.currentMember) {
+      renderMemberPicker();
+    } else {
+      renderMain();
+      subscribeTasks();
+    }
+  }, (err) => {
+    console.error('Members listener error', err);
+    toast('Gagal load anggota: ' + err.message, 'error');
+  });
+}
+
+function subscribeTasks() {
+  if (STATE.unsubTasks) STATE.unsubTasks();
+  const tasksRef = collection(STATE.db, 'tasks');
+  const q = query(tasksRef, where('date', '==', STATE.selectedDate));
+  STATE.unsubTasks = onSnapshot(q, (snap) => {
+    STATE.tasks = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => {
+        const ta = a.createdAt?.toMillis?.() || 0;
+        const tb = b.createdAt?.toMillis?.() || 0;
+        return ta - tb;
+      });
+    renderKanban();
+  }, (err) => {
+    console.error('Tasks listener error', err);
+    toast('Gagal load tugas: ' + err.message, 'error');
+  });
+}
+
+/* =============================================================
+   PASSWORD GATE
+   ============================================================= */
+function renderPasswordGate() {
+  document.getElementById('app').innerHTML = `
+    <div class="setup-shell">
+      <div class="setup-card" style="max-width:420px;text-align:center">
+        <div style="font-size:42px;margin-bottom:8px">🔒</div>
+        <h1 style="font-size:22px;margin-bottom:6px">Team Tracker</h1>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:22px">Tool internal Tim B2C · masukkan password tim untuk lanjut</p>
+        <div class="form-group" style="text-align:left">
+          <input type="password" id="pw-input" class="input" placeholder="Password tim..." autocomplete="off" style="text-align:center;letter-spacing:2px">
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);justify-content:center;margin-bottom:14px;cursor:pointer">
+          <input type="checkbox" id="pw-remember" checked> Ingat saya di browser ini selama 7 hari
+        </label>
+        <button id="pw-submit" class="btn btn-primary" style="width:100%">Masuk →</button>
+        <div id="pw-error" style="margin-top:10px;font-size:12px;color:var(--danger);min-height:16px"></div>
+        <div style="margin-top:18px;font-size:11px;color:var(--text-light)">
+          Lupa password? Hubungi admin tim.
+        </div>
+      </div>
+    </div>
+  `;
+  const input = document.getElementById('pw-input');
+  const submit = document.getElementById('pw-submit');
+  const remember = document.getElementById('pw-remember');
+  const errEl = document.getElementById('pw-error');
+
+  async function tryAuth() {
+    const pw = input.value.trim();
+    if (!pw) { errEl.textContent = 'Password kosong'; return; }
+    submit.disabled = true;
+    submit.innerHTML = '<span class="loader"></span>';
+    const hash = await sha256Hex(pw);
+    if (hash === PASSWORD_HASH) {
+      if (remember.checked) {
+        localStorage.setItem(LS_KEYS.AUTHED_AT, String(Date.now()));
+      } else {
+        sessionStorage.setItem(LS_KEYS.AUTHED_AT, String(Date.now()));
+        localStorage.setItem(LS_KEYS.AUTHED_AT, String(Date.now() - (AUTH_TTL_DAYS - 0.5) * 86400000));
+      }
+      bootstrap();
+    } else {
+      submit.disabled = false;
+      submit.textContent = 'Masuk →';
+      errEl.textContent = 'Password salah';
+      input.value = '';
+      input.focus();
+    }
+  }
+  submit.addEventListener('click', tryAuth);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryAuth(); });
+  input.focus();
+}
+
+/* =============================================================
+   SETUP WIZARD (first time)
+   ============================================================= */
+function renderSetupWizard() {
+  document.getElementById('app').innerHTML = `
+    <div class="setup-shell">
+      <div class="setup-card">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+          <div class="header-brand-icon" style="width:44px;height:44px;font-size:22px">T</div>
+          <div>
+            <h1 style="margin-bottom:0">Team Tracker</h1>
+            <div style="font-size:13px;color:var(--text-muted)">Setup awal — sekali setup, langsung jalan</div>
+          </div>
+        </div>
+
+        <div class="setup-step">
+          <strong>1. Bikin Firebase Project</strong>
+          Buka <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → Add project → kasih nama (mis: <code>team-tracker</code>) → skip Google Analytics → Create.
+        </div>
+        <div class="setup-step">
+          <strong>2. Aktifkan Firestore Database</strong>
+          Di sidebar Firebase → Build → <strong>Firestore Database</strong> → Create database → pilih lokasi (rekomen: <code>asia-southeast1</code> / Singapore) → Start in <strong>test mode</strong> dulu (nanti rules dipasang).
+        </div>
+        <div class="setup-step">
+          <strong>3. Aktifkan Anonymous Auth</strong>
+          Build → <strong>Authentication</strong> → Get started → Sign-in method → <strong>Anonymous</strong> → Enable.
+        </div>
+        <div class="setup-step">
+          <strong>4. Daftarkan Web App & ambil config</strong>
+          Project Overview → klik ikon <code>&lt;/&gt;</code> (Add web app) → kasih nickname → Register (tidak perlu hosting) → copy object <code>firebaseConfig</code> dari snippet.
+        </div>
+        <div class="setup-step">
+          <strong>5. Paste config-nya di bawah</strong>
+          Format yang diharapkan:
+          <pre class="code-block">{
+  "apiKey": "AIzaSy...",
+  "authDomain": "namaproject.firebaseapp.com",
+  "projectId": "namaproject",
+  "storageBucket": "namaproject.appspot.com",
+  "messagingSenderId": "12345",
+  "appId": "1:12345:web:abc"
+}</pre>
+        </div>
+
+        <div class="form-group" style="margin-top:18px">
+          <label class="label">Paste firebaseConfig JSON</label>
+          <textarea id="setup-config-input" class="setup-config-input" placeholder='{ "apiKey": "...", "authDomain": "..." }'></textarea>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="setup-save-btn" class="btn btn-primary" style="flex:1">Simpan & Lanjut →</button>
+        </div>
+        <div style="margin-top:14px;font-size:12px;color:var(--text-muted)">
+          Config disimpan di localStorage browser kamu — aman, ga di-share. Setiap device perlu setup sekali.
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('setup-save-btn').addEventListener('click', () => {
+    const raw = document.getElementById('setup-config-input').value.trim();
+    if (!raw) { toast('Paste config dulu', 'error'); return; }
+    try {
+      let configRaw = raw;
+      // Extract firebaseConfig object kalau user paste full snippet
+      // (matches: `const firebaseConfig = {...}`, `var firebaseConfig = {...}`, `firebaseConfig: {...}`)
+      const objMatch = raw.match(/firebaseConfig\s*[:=]\s*(\{[\s\S]*?\n\s*\})/);
+      if (objMatch) {
+        configRaw = objMatch[1];
+      } else {
+        // Fallback: kalau ada `{` ... `}` yang mengandung apiKey, ambil itu
+        const braceMatch = raw.match(/\{[\s\S]*?apiKey[\s\S]*?\}/);
+        if (braceMatch && !raw.trim().startsWith('{')) {
+          configRaw = braceMatch[0];
+        }
+      }
+      let cfg;
+      try {
+        cfg = JSON.parse(configRaw);
+      } catch {
+        // JS object literal (unquoted keys, single quotes, dll)
+        cfg = Function('"use strict"; return (' + configRaw + ')')();
+      }
+      if (!cfg || !cfg.apiKey || !cfg.projectId) {
+        toast('Config tidak valid — apiKey & projectId wajib ada', 'error');
+        return;
+      }
+      saveConfig(cfg);
+      toast('Config tersimpan, memuat...', 'success');
+      setTimeout(() => location.reload(), 600);
+    } catch (err) {
+      toast('Format config salah: ' + err.message, 'error');
+    }
+  });
+}
+
+/* =============================================================
+   FIRST ADMIN SETUP (no members in DB)
+   ============================================================= */
+function renderFirstAdminSetup() {
+  document.getElementById('app').innerHTML = `
+    <div class="setup-shell">
+      <div class="setup-card" style="max-width:480px">
+        <h1 style="font-size:20px">Selamat datang!</h1>
+        <p>Database masih kosong. Mari bikin admin pertama (biasanya: <strong>kamu sendiri sebagai boss</strong>).</p>
+        <div class="form-group">
+          <label class="label">Nama kamu</label>
+          <input id="fa-name" class="input" placeholder="Mis: Panji" autocomplete="off">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="fa-create-btn" class="btn btn-primary" style="flex:1">Bikin Admin & Mulai</button>
+        </div>
+        <div style="margin-top:14px;font-size:12px;color:var(--text-muted)">
+          Admin bisa: tambah/hapus anggota tim, tambahkan tugas untuk siapapun, kasih comment ke tugas siapapun, ubah role.
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('fa-create-btn').addEventListener('click', async () => {
+    const name = document.getElementById('fa-name').value.trim();
+    if (!name) { toast('Nama wajib diisi', 'error'); return; }
+    try {
+      const ref = await addDoc(collection(STATE.db, 'members'), {
+        name,
+        role: 'admin',
+        active: true,
+        createdAt: serverTimestamp(),
+      });
+      const member = { id: ref.id, name, role: 'admin', active: true };
+      STATE.currentMember = member;
+      localStorage.setItem(LS_KEYS.CURRENT_MEMBER, JSON.stringify(member));
+      toast('Admin dibuat — sekarang tambahin anggota tim lain', 'success');
+      // Listener will auto-render main
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  });
+}
+
+/* =============================================================
+   MEMBER PICKER (login)
+   ============================================================= */
+function renderMemberPicker() {
+  const opts = STATE.members.map(m => `
+    <button class="member-row" data-member-id="${m.id}" style="cursor:pointer;text-align:left;width:100%;border:none">
+      ${avatarHtml(m.name, 'avatar-lg')}
+      <div class="member-info">
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-meta">${m.role === 'admin' ? '<span class="admin-pill">Admin</span>' : 'Member'}</div>
+      </div>
+    </button>
+  `).join('');
+  document.getElementById('app').innerHTML = `
+    <div class="setup-shell">
+      <div class="setup-card" style="max-width:440px">
+        <h1 style="font-size:20px">Siapa kamu?</h1>
+        <p>Pilih nama kamu untuk lanjut.</p>
+        <div class="member-list">${opts}</div>
+        <div style="margin-top:18px;text-align:center;font-size:12px;color:var(--text-muted)">
+          Nama kamu belum ada? Minta admin untuk tambahkan dulu.
+        </div>
+      </div>
+    </div>
+  `;
+  document.querySelectorAll('[data-member-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.memberId;
+      const m = STATE.members.find(x => x.id === id);
+      if (!m) return;
+      STATE.currentMember = m;
+      localStorage.setItem(LS_KEYS.CURRENT_MEMBER, JSON.stringify(m));
+      // Listener already running, trigger main render
+      renderMain();
+      subscribeTasks();
+    });
+  });
+}
+
+/* =============================================================
+   MAIN UI — HEADER + KANBAN
+   ============================================================= */
+function renderMain() {
+  const me = STATE.currentMember;
+  const isAdmin = me?.role === 'admin';
+
+  // Filter chips
+  const allChip = `<button class="chip ${STATE.filterMemberId === null ? 'active' : ''}" data-filter-member="">Semua</button>`;
+  const memberChips = STATE.members.map(m => `
+    <button class="chip ${STATE.filterMemberId === m.id ? 'active' : ''}" data-filter-member="${m.id}">
+      <span class="chip-avatar" style="background:${colorFor(m.name)}">${escapeHtml(initials(m.name))}</span>
+      ${escapeHtml(m.name)}
+    </button>
+  `).join('');
+
+  document.getElementById('app').innerHTML = `
+    <div class="app-shell">
+      <div class="header">
+        <div class="header-brand">
+          <div class="header-brand-icon">T</div>
+          <div class="header-brand-text">Team Tracker</div>
+        </div>
+
+        <div class="header-controls">
+          <div class="date-control">
+            <button class="date-nav" id="date-prev" title="Hari sebelumnya">‹</button>
+            <input type="date" id="date-input" class="date-input" value="${STATE.selectedDate}">
+            <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
+            <button class="date-today-btn" id="date-today">Hari ini</button>
+          </div>
+          <div class="chip-row" id="member-filter-chips">
+            ${allChip}${memberChips}
+          </div>
+        </div>
+
+        <div class="header-right">
+          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-members">👥 Anggota</button>` : ''}
+          <button class="btn btn-secondary btn-sm" id="btn-export">📊 Export</button>
+          <div class="user-badge">
+            <span class="user-badge-avatar" style="background:${colorFor(me.name)}">${escapeHtml(initials(me.name))}</span>
+            <span class="user-name">${escapeHtml(me.name)}</span>
+            ${isAdmin ? '<span class="admin-pill">Admin</span>' : ''}
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-logout" title="Ganti user">⎋</button>
+        </div>
+      </div>
+
+      <div id="kanban-root"></div>
+
+      <button class="btn btn-primary"
+        style="position:fixed;bottom:24px;right:24px;border-radius:100px;padding:14px 22px;box-shadow:var(--shadow-lg);font-size:14px;font-weight:600"
+        id="btn-new-task">
+        + Tugas Baru
+      </button>
+    </div>
+  `;
+
+  // Bind events
+  document.getElementById('date-prev').addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, -1); subscribeTasks(); renderMain(); });
+  document.getElementById('date-next').addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, 1); subscribeTasks(); renderMain(); });
+  document.getElementById('date-today').addEventListener('click', () => { STATE.selectedDate = todayStr(); subscribeTasks(); renderMain(); });
+  document.getElementById('date-input').addEventListener('change', (e) => {
+    STATE.selectedDate = e.target.value || todayStr();
+    subscribeTasks();
+    renderMain();
+  });
+  document.querySelectorAll('[data-filter-member]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.filterMember;
+      STATE.filterMemberId = v === '' ? null : v;
+      renderMain();
+    });
+  });
+  document.getElementById('btn-new-task').addEventListener('click', () => openTaskModal());
+  if (isAdmin) document.getElementById('btn-manage-members').addEventListener('click', openMembersModal);
+  document.getElementById('btn-export').addEventListener('click', openExportModal);
+  document.getElementById('btn-logout').addEventListener('click', () => {
+    localStorage.removeItem(LS_KEYS.CURRENT_MEMBER);
+    STATE.currentMember = null;
+    renderMemberPicker();
+  });
+
+  renderKanban();
+}
+
+/* =============================================================
+   KANBAN
+   ============================================================= */
+function renderKanban() {
+  const root = document.getElementById('kanban-root');
+  if (!root) return;
+
+  const filtered = STATE.tasks.filter(t => !STATE.filterMemberId || t.assigneeId === STATE.filterMemberId);
+
+  const cols = [
+    { key: 'todo', label: 'Todo', icon: '○' },
+    { key: 'proses', label: 'Proses', icon: '◐' },
+    { key: 'done', label: 'Done', icon: '●' },
+  ];
+
+  const colsHtml = cols.map(c => {
+    const tasksInCol = filtered.filter(t => (t.status || 'todo') === c.key);
+    const cards = tasksInCol.map(t => renderTaskCard(t)).join('');
+    return `
+      <div class="kanban-col col-${c.key}" data-col="${c.key}">
+        <div class="kanban-col-header">
+          <div class="kanban-col-title">
+            <span class="kanban-col-icon"></span>
+            ${c.label}
+          </div>
+          <span class="kanban-col-count">${tasksInCol.length}</span>
+        </div>
+        <div class="kanban-list">
+          ${cards || `<div class="kanban-empty">Kosong</div>`}
+        </div>
+        <button class="kanban-add-btn" data-add-status="${c.key}">+ Tambah</button>
+      </div>
+    `;
+  }).join('');
+
+  root.innerHTML = `<div class="kanban">${colsHtml}</div>`;
+
+  // Bind card click
+  root.querySelectorAll('[data-task-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-stop]')) return;
+      openTaskModal(el.dataset.taskId);
+    });
+  });
+
+  // Drag-drop
+  root.querySelectorAll('[data-task-id]').forEach(card => {
+    card.draggable = true;
+    card.addEventListener('dragstart', (e) => {
+      card.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', card.dataset.taskId);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  root.querySelectorAll('.kanban-col').forEach(col => {
+    col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      col.classList.remove('drag-over');
+      const taskId = e.dataTransfer.getData('text/plain');
+      const newStatus = col.dataset.col;
+      const task = STATE.tasks.find(t => t.id === taskId);
+      if (!task || task.status === newStatus) return;
+      await updateTaskStatus(taskId, newStatus);
+    });
+  });
+
+  // Add buttons
+  root.querySelectorAll('[data-add-status]').forEach(btn => {
+    btn.addEventListener('click', () => openTaskModal(null, { status: btn.dataset.addStatus }));
+  });
+}
+
+function renderTaskCard(t) {
+  const assignee = STATE.members.find(m => m.id === t.assigneeId);
+  const assigneeName = assignee?.name || t.assigneeName || '?';
+  const commentCount = (t.comments || []).length;
+  const desc = t.description ? `<div class="task-card-desc">${escapeHtml(t.description)}</div>` : '';
+  return `
+    <div class="task-card col-${t.status || 'todo'}" data-task-id="${t.id}">
+      <div class="task-card-title">${escapeHtml(t.title)}</div>
+      ${desc}
+      <div class="task-card-meta">
+        <span class="task-card-assignee">
+          ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
+        </span>
+        ${commentCount ? `<span class="task-card-comments-badge">💬 ${commentCount}</span>` : ''}
+        <span style="margin-left:auto">${timeAgo(t.updatedAt || t.createdAt)}</span>
+      </div>
+    </div>
+  `;
+}
+
+/* =============================================================
+   TASK CRUD
+   ============================================================= */
+function openTaskModal(taskId = null, presets = {}) {
+  const task = taskId ? STATE.tasks.find(t => t.id === taskId) : null;
+  const isEdit = !!task;
+  const me = STATE.currentMember;
+  const isAdmin = me.role === 'admin';
+
+  // Default assignee: me (kalau create), atau dari task (kalau edit)
+  const defaultAssigneeId = task?.assigneeId || me.id;
+
+  const memberOpts = STATE.members.map(m =>
+    `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
+  ).join('');
+
+  const statusOpts = ['todo', 'proses', 'done'].map(s =>
+    `<option value="${s}" ${((task?.status || presets.status || 'todo') === s) ? 'selected' : ''}>${s.toUpperCase()}</option>`
+  ).join('');
+
+  // Non-admin can only assign to self
+  const canChangeAssignee = isAdmin;
+
+  const html = `
+    <div class="modal-header">
+      <div class="modal-title">${isEdit ? 'Edit Tugas' : 'Tugas Baru'}</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="label">Judul Tugas</label>
+        <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(task?.title || '')}" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label class="label">Deskripsi (opsional)</label>
+        <textarea id="t-desc" class="textarea" placeholder="Detail tugas...">${escapeHtml(task?.description || '')}</textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="label">Status</label>
+          <select id="t-status" class="select">${statusOpts}</select>
+        </div>
+        <div class="form-group">
+          <label class="label">Pelaksana</label>
+          <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
+        </div>
+        <div class="form-group">
+          <label class="label">Tanggal</label>
+          <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}">
+        </div>
+      </div>
+
+      ${isEdit ? renderTaskMetaInfo(task) : ''}
+      ${isEdit ? renderCommentsSection(task) : ''}
+    </div>
+    <div class="modal-footer">
+      ${isEdit ? `<button class="btn btn-danger" id="t-delete" style="margin-right:auto">Hapus</button>` : ''}
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="t-save">${isEdit ? 'Simpan' : 'Buat Tugas'}</button>
+    </div>
+  `;
+
+  showModal(html, { size: 'lg' });
+
+  document.getElementById('t-save').addEventListener('click', async () => {
+    const title = document.getElementById('t-title').value.trim();
+    const desc = document.getElementById('t-desc').value.trim();
+    const status = document.getElementById('t-status').value;
+    const assigneeId = document.getElementById('t-assignee').value;
+    const date = document.getElementById('t-date').value;
+    if (!title) { toast('Judul wajib diisi', 'error'); return; }
+    if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
+    const assignee = STATE.members.find(m => m.id === assigneeId);
+    if (!assignee) { toast('Pelaksana tidak valid', 'error'); return; }
+
+    try {
+      if (isEdit) {
+        const update = {
+          title, description: desc, status, date,
+          assigneeId, assigneeName: assignee.name,
+          updatedAt: serverTimestamp(),
+        };
+        if (status === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
+        if (status !== 'done' && task.status === 'done') update.completedAt = null;
+        await updateDoc(doc(STATE.db, 'tasks', task.id), update);
+        toast('Tugas tersimpan', 'success');
+      } else {
+        await addDoc(collection(STATE.db, 'tasks'), {
+          title, description: desc, status, date,
+          assigneeId, assigneeName: assignee.name,
+          createdById: me.id, createdByName: me.name,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          completedAt: status === 'done' ? serverTimestamp() : null,
+          comments: [],
+        });
+        toast('Tugas dibuat', 'success');
+      }
+      closeModal();
+    } catch (err) {
+      toast('Gagal simpan: ' + err.message, 'error');
+    }
+  });
+
+  if (isEdit) {
+    document.getElementById('t-delete').addEventListener('click', async () => {
+      if (!confirm(`Hapus tugas "${task.title}"?`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'tasks', task.id));
+        toast('Tugas dihapus', 'success');
+        closeModal();
+      } catch (err) {
+        toast('Gagal hapus: ' + err.message, 'error');
+      }
+    });
+
+    // Comment form binding
+    bindCommentForm(task);
+    bindCommentDelete(task);
+  }
+}
+
+function renderTaskMetaInfo(task) {
+  const creator = STATE.members.find(m => m.id === task.createdById);
+  const creatorName = creator?.name || task.createdByName || '?';
+  return `
+    <div class="task-meta-row">
+      <div>📝 Dibuat ${timeAgo(task.createdAt)} oleh <strong>${escapeHtml(creatorName)}</strong></div>
+      ${task.completedAt ? `<div>✅ Selesai ${timeAgo(task.completedAt)}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderCommentsSection(task) {
+  const comments = task.comments || [];
+  const me = STATE.currentMember;
+  const isAdmin = me.role === 'admin';
+
+  const commentsList = comments.map((c, i) => {
+    const canDelete = isAdmin || c.authorId === me.id;
+    return `
+      <div class="comment">
+        ${avatarHtml(c.authorName)}
+        <div class="comment-content">
+          <div class="comment-head">
+            <span class="comment-author">${escapeHtml(c.authorName)}</span>
+            <span class="comment-time">${timeAgo(c.createdAt)}</span>
+            ${canDelete ? `<button class="comment-delete" data-stop data-del-comment="${i}">hapus</button>` : ''}
+          </div>
+          <div class="comment-text">${escapeHtml(c.text)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="comments-section">
+      <div class="comments-title">Comments (${comments.length})</div>
+      <div id="comments-list">
+        ${commentsList || '<div style="font-size:12px;color:var(--text-light);padding:8px 0">Belum ada comment</div>'}
+      </div>
+      <div class="comment-form">
+        ${avatarHtml(me.name)}
+        <textarea id="comment-input" class="textarea" placeholder="Tulis comment..." style="flex:1"></textarea>
+      </div>
+      <div style="text-align:right;margin-top:6px">
+        <button class="btn btn-primary btn-sm" id="comment-submit">Kirim Comment</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindCommentForm(task) {
+  const btn = document.getElementById('comment-submit');
+  const input = document.getElementById('comment-input');
+  if (!btn || !input) return;
+  btn.addEventListener('click', async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    const me = STATE.currentMember;
+    const newComment = {
+      id: uid(),
+      authorId: me.id,
+      authorName: me.name,
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await updateDoc(doc(STATE.db, 'tasks', task.id), {
+        comments: arrayUnion(newComment),
+        updatedAt: serverTimestamp(),
+      });
+      input.value = '';
+      toast('Comment terkirim', 'success');
+      // Re-render comments via state refresh — listener will update
+      // But also update local task for immediate UX
+      task.comments = [...(task.comments || []), newComment];
+      const list = document.getElementById('comments-list');
+      if (list) {
+        list.outerHTML = renderCommentsSection(task).match(/<div id="comments-list">[\s\S]*?<\/div>(?=\s*<div class="comment-form")/)[0];
+        bindCommentDelete(task);
+      }
+    } catch (err) {
+      toast('Gagal kirim: ' + err.message, 'error');
+    }
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) btn.click();
+  });
+}
+
+function bindCommentDelete(task) {
+  document.querySelectorAll('[data-del-comment]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.delComment, 10);
+      const target = (task.comments || [])[idx];
+      if (!target) return;
+      if (!confirm('Hapus comment ini?')) return;
+      try {
+        await updateDoc(doc(STATE.db, 'tasks', task.id), {
+          comments: arrayRemove(target),
+          updatedAt: serverTimestamp(),
+        });
+        toast('Comment dihapus', 'success');
+      } catch (err) {
+        toast('Gagal hapus: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+async function updateTaskStatus(taskId, newStatus) {
+  const task = STATE.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  const update = {
+    status: newStatus,
+    updatedAt: serverTimestamp(),
+  };
+  if (newStatus === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
+  if (newStatus !== 'done' && task.status === 'done') update.completedAt = null;
+  try {
+    await updateDoc(doc(STATE.db, 'tasks', taskId), update);
+  } catch (err) {
+    toast('Gagal update: ' + err.message, 'error');
+  }
+}
+
+/* =============================================================
+   MEMBERS MODAL (admin only)
+   ============================================================= */
+function openMembersModal() {
+  const me = STATE.currentMember;
+  if (me.role !== 'admin') return;
+
+  const list = STATE.members.map(m => {
+    const isMe = m.id === me.id;
+    return `
+      <div class="member-row">
+        ${avatarHtml(m.name, 'avatar-lg')}
+        <div class="member-info">
+          <div class="member-name">${escapeHtml(m.name)} ${isMe ? '<span style="font-size:11px;color:var(--text-muted)">(kamu)</span>' : ''}</div>
+          <div class="member-meta">${m.role === 'admin' ? '<span class="admin-pill">Admin</span>' : 'Member'}</div>
+        </div>
+        <div class="member-actions">
+          ${!isMe ? `
+            <button class="btn btn-secondary btn-sm" data-toggle-role="${m.id}">
+              ${m.role === 'admin' ? 'Jadikan Member' : 'Jadikan Admin'}
+            </button>
+            <button class="btn btn-danger btn-sm" data-del-member="${m.id}">Hapus</button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">Anggota Tim</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;margin-bottom:18px">
+        <div style="flex:1">
+          <label class="label">Tambah Anggota Baru</label>
+          <input id="new-member-name" class="input" placeholder="Nama anggota baru" autocomplete="off">
+        </div>
+        <select id="new-member-role" class="select" style="width:auto">
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button class="btn btn-primary" id="new-member-add">+ Tambah</button>
+      </div>
+      <div class="member-list">${list}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
+
+  document.getElementById('new-member-add').addEventListener('click', async () => {
+    const name = document.getElementById('new-member-name').value.trim();
+    const role = document.getElementById('new-member-role').value;
+    if (!name) { toast('Nama wajib diisi', 'error'); return; }
+    if (STATE.members.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+      toast('Nama sudah ada', 'error'); return;
+    }
+    try {
+      await addDoc(collection(STATE.db, 'members'), {
+        name, role, active: true, createdAt: serverTimestamp(),
+      });
+      toast(`${name} ditambahkan`, 'success');
+      closeModal();
+      // Listener will refresh
+      setTimeout(openMembersModal, 100);
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  });
+
+  document.querySelectorAll('[data-toggle-role]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.toggleRole;
+      const m = STATE.members.find(x => x.id === id);
+      const newRole = m.role === 'admin' ? 'member' : 'admin';
+      try {
+        await updateDoc(doc(STATE.db, 'members', id), { role: newRole });
+        toast(`Role ${m.name} → ${newRole}`, 'success');
+        setTimeout(openMembersModal, 100);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-del-member]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.delMember;
+      const m = STATE.members.find(x => x.id === id);
+      if (!confirm(`Hapus ${m.name} dari tim?\n\n(Tugas-tugas yang sudah diassign ke ${m.name} akan tetap ada, tapi pelaksananya jadi "?")`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'members', id));
+        toast(`${m.name} dihapus`, 'success');
+        setTimeout(openMembersModal, 100);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+/* =============================================================
+   EXPORT MODAL
+   ============================================================= */
+function openExportModal() {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">Export Data untuk Analisa</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:14px;color:var(--text-muted);font-size:13px">
+        Export task dalam range tanggal tertentu — bisa kasih file-nya ke Claude untuk minta analisa
+        (mis: produktivitas per orang, status distribution, stuck tasks, dll).
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div class="form-group">
+          <label class="label">Dari Tanggal</label>
+          <input type="date" id="exp-from" class="input" value="${shiftDate(todayStr(), -6)}">
+        </div>
+        <div class="form-group">
+          <label class="label">Sampai Tanggal</label>
+          <input type="date" id="exp-to" class="input" value="${todayStr()}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="label">Filter Anggota (opsional)</label>
+        <select id="exp-member" class="select">
+          <option value="">Semua anggota</option>
+          ${STATE.members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="label">Format</label>
+        <select id="exp-format" class="select">
+          <option value="json">JSON (paling lengkap, buat dianalisa Claude)</option>
+          <option value="csv">CSV (buka di Excel)</option>
+          <option value="markdown">Markdown (laporan readable)</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="exp-go">Export & Download</button>
+    </div>
+  `);
+
+  document.getElementById('exp-go').addEventListener('click', async () => {
+    const from = document.getElementById('exp-from').value;
+    const to = document.getElementById('exp-to').value;
+    const memberFilter = document.getElementById('exp-member').value;
+    const format = document.getElementById('exp-format').value;
+    if (!from || !to) { toast('Tanggal wajib diisi', 'error'); return; }
+    if (from > to) { toast('Tanggal "dari" harus sebelum "sampai"', 'error'); return; }
+
+    try {
+      toast('Mengambil data...', '');
+      const tasksRef = collection(STATE.db, 'tasks');
+      const q = query(tasksRef, where('date', '>=', from), where('date', '<=', to));
+      const snap = await getDocs(q);
+      let tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (memberFilter) tasks = tasks.filter(t => t.assigneeId === memberFilter);
+      tasks.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+
+      const filename = `team_tracker_${from}_to_${to}${memberFilter ? '_' + STATE.members.find(m => m.id === memberFilter)?.name : ''}.${format === 'markdown' ? 'md' : format}`;
+
+      let content = '';
+      if (format === 'json') {
+        content = JSON.stringify({
+          export_date: new Date().toISOString(),
+          range: { from, to },
+          member_filter: memberFilter || 'all',
+          members: STATE.members.map(m => ({ id: m.id, name: m.name, role: m.role })),
+          tasks: tasks.map(t => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || '',
+            status: t.status,
+            date: t.date,
+            assignee: t.assigneeName,
+            created_by: t.createdByName,
+            created_at: tsToIso(t.createdAt),
+            updated_at: tsToIso(t.updatedAt),
+            completed_at: tsToIso(t.completedAt),
+            comments: (t.comments || []).map(c => ({
+              author: c.authorName,
+              text: c.text,
+              at: c.createdAt,
+            })),
+          })),
+        }, null, 2);
+      } else if (format === 'csv') {
+        const header = ['Tanggal', 'Status', 'Pelaksana', 'Judul', 'Deskripsi', 'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai', 'Jumlah Comment'];
+        const rows = tasks.map(t => [
+          t.date,
+          (t.status || '').toUpperCase(),
+          t.assigneeName || '',
+          t.title || '',
+          (t.description || '').replace(/[\r\n]+/g, ' '),
+          t.createdByName || '',
+          tsToIso(t.createdAt),
+          tsToIso(t.updatedAt),
+          tsToIso(t.completedAt),
+          (t.comments || []).length,
+        ]);
+        content = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+      } else {
+        // markdown
+        content = `# Laporan Team Tracker\n\n**Periode:** ${from} s/d ${to}\n**Anggota:** ${memberFilter ? STATE.members.find(m => m.id === memberFilter)?.name : 'Semua tim'}\n**Total tugas:** ${tasks.length}\n\n`;
+        const byDate = {};
+        tasks.forEach(t => { (byDate[t.date] = byDate[t.date] || []).push(t); });
+        Object.keys(byDate).sort().forEach(d => {
+          content += `\n## ${d} (${dateLabel(d)})\n\n`;
+          byDate[d].forEach(t => {
+            const statusIcon = t.status === 'done' ? '[DONE]' : t.status === 'proses' ? '[PROSES]' : '[TODO]';
+            content += `- ${statusIcon} **${t.title}** — _${t.assigneeName}_\n`;
+            if (t.description) content += `  > ${t.description}\n`;
+            (t.comments || []).forEach(c => {
+              content += `  - 💬 ${c.authorName}: ${c.text}\n`;
+            });
+          });
+        });
+
+        // Summary
+        content += `\n## Ringkasan\n\n`;
+        const byStatus = {};
+        tasks.forEach(t => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
+        content += `**Status distribution:** ${Object.entries(byStatus).map(([k, v]) => `${k.toUpperCase()}: ${v}`).join(' · ')}\n\n`;
+        const byMember = {};
+        tasks.forEach(t => {
+          const k = t.assigneeName || '?';
+          byMember[k] = byMember[k] || { total: 0, done: 0 };
+          byMember[k].total++;
+          if (t.status === 'done') byMember[k].done++;
+        });
+        content += `**Per anggota:**\n`;
+        Object.entries(byMember).forEach(([k, v]) => {
+          content += `- ${k}: ${v.total} tugas (${v.done} done = ${Math.round(v.done/v.total*100)}%)\n`;
+        });
+      }
+
+      downloadFile(filename, content, format === 'json' ? 'application/json' : format === 'csv' ? 'text/csv' : 'text/markdown');
+      toast(`Exported: ${tasks.length} tugas`, 'success');
+      closeModal();
+    } catch (err) {
+      toast('Gagal export: ' + err.message, 'error');
+      console.error(err);
+    }
+  });
+}
+
+function tsToIso(ts) {
+  if (!ts) return '';
+  if (typeof ts === 'string') return ts;
+  if (ts.toDate) return ts.toDate().toISOString();
+  if (ts instanceof Date) return ts.toISOString();
+  return String(ts);
+}
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* =============================================================
+   GO
+   ============================================================= */
+bootstrap();
+
+</script>
+</body>
+</html>
