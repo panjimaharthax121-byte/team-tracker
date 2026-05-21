@@ -11,15 +11,15 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     /* === APOTEKKU BRAND === */
-    --bg: #faf7f3;           /* warm off-white (soft latte) */
+    --bg: #ffffff;           /* putih bersih */
     --bg-card: #ffffff;
-    --bg-col: #f4f1ed;       /* sand */
-    --bg-sidebar: #f7f3ee;
-    --border: #e8e2da;
-    --border-strong: #d4cdc1;
+    --bg-col: #f5f5f5;       /* abu sangat tipis utk kolom kanban */
+    --bg-sidebar: #fafafa;   /* abu paling tipis sidebar */
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
     --text: #1a1a1a;         /* ink */
-    --text-muted: #5c5851;
-    --text-light: #8b867d;
+    --text-muted: #525252;
+    --text-light: #a3a3a3;
     --primary: #dc2626;      /* ApotekKu red */
     --primary-dark: #b91c1c;
     --primary-light: #fde8e8;
@@ -670,6 +670,130 @@
     border-color: var(--primary);
     color: var(--primary);
     background: var(--primary-light);
+  }
+
+  /* === RECAP TABLE === */
+  .recap-table-wrap {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .recap-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .recap-table thead th {
+    background: var(--bg-col);
+    text-align: left;
+    padding: 12px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .recap-table thead th:hover { background: #ececec; }
+  .recap-table thead th.sorted::after {
+    content: ' ↓';
+    color: var(--primary);
+  }
+  .recap-table thead th.sorted.asc::after { content: ' ↑'; }
+  .recap-table tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  .recap-table tbody tr:hover { background: var(--bg-col); cursor: pointer; }
+  .recap-table tbody tr:last-child { border-bottom: none; }
+  .recap-table td {
+    padding: 12px 14px;
+    vertical-align: middle;
+  }
+  .recap-table td.cell-title { font-weight: 600; color: var(--text); }
+  .recap-table td.cell-date { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+  .recap-table .mini-progress {
+    width: 70px;
+    height: 4px;
+    background: var(--bg-col);
+    border-radius: 100px;
+    overflow: hidden;
+    display: inline-block;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .recap-table .mini-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 100px;
+  }
+  .recap-table .status-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .recap-table .status-pill.todo { background: var(--info-light); color: var(--info); }
+  .recap-table .status-pill.proses { background: var(--warning-light); color: #92400e; }
+  .recap-table .status-pill.done { background: var(--success-light); color: #15803d; }
+  .recap-table-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-light);
+    font-size: 14px;
+  }
+  .recap-summary {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .recap-summary-card {
+    flex: 1;
+    min-width: 150px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+  }
+  .recap-summary-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .recap-summary-value {
+    font-family: var(--font-serif);
+    font-size: 32px;
+    font-weight: 400;
+  }
+  .recap-summary-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* === CARRY-OVER BADGE === */
+  .carryover-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: var(--warning-light);
+    color: #92400e;
+    margin-bottom: 6px;
   }
 
   /* === CATEGORY BADGE === */
@@ -1505,7 +1629,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
 import {
   getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, deleteDoc,
-  onSnapshot, query, where, orderBy, serverTimestamp, updateDoc, arrayUnion, arrayRemove
+  onSnapshot, query, where, orderBy, limit, serverTimestamp, updateDoc, arrayUnion, arrayRemove
 } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
 
 /* =============================================================
@@ -1526,6 +1650,17 @@ const STATE = {
   filterMemberId: null,  // null = semua
   filterLabelIds: [],    // filter task by label (multi)
   filterCategoryId: null, // null = semua kategori
+  currentView: 'kanban', // 'kanban' | 'recap'
+  recapFilters: {
+    from: '',         // range tanggal dari
+    to: '',           // range tanggal sampai
+    status: 'all',    // 'all' | 'todo' | 'proses' | 'done' | 'unfinished'
+    memberId: null,
+    categoryId: null,
+    search: '',
+    sortBy: 'date',
+    sortDir: 'desc',
+  },
   unsubTasks: null,
   unsubMembers: null,
   unsubBoards: null,
@@ -1927,15 +2062,26 @@ function switchBoard(boardId) {
   renderMain();
 }
 
-// Helper — task yang visible di board aktif
+// Helper — task yang visible di kanban untuk tanggal aktif
+// Rollover logic: kalau selectedDate == hari ini, task lampau yg belum done OTOMATIS muncul
 function visibleTasks() {
-  return STATE.tasks.filter(t => (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId);
+  const today = todayStr();
+  const isToday = STATE.selectedDate === today;
+  return STATE.tasks.filter(t => {
+    if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
+    // Selalu tampil kalau tanggalnya tepat
+    if (t.date === STATE.selectedDate) return true;
+    // Rollover: kalau pilih "Hari ini", task lampau yang belum done ikut muncul
+    if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
+    return false;
+  });
 }
 
 function subscribeTasks() {
   if (STATE.unsubTasks) STATE.unsubTasks();
   const tasksRef = collection(STATE.db, 'tasks');
-  const q = query(tasksRef, where('date', '==', STATE.selectedDate));
+  // Subscribe semua task (limit 1000) — supaya bisa rollover task lama belum done & untuk view Rekap
+  const q = query(tasksRef, orderBy('createdAt', 'desc'), limit(1000));
   STATE.unsubTasks = onSnapshot(q, (snap) => {
     STATE.tasks = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
@@ -1945,6 +2091,7 @@ function subscribeTasks() {
         return ta - tb;
       });
     renderKanban();
+    renderRecapTable();
   }, (err) => {
     console.error('Tasks listener error', err);
     toast('Gagal load tugas: ' + err.message, 'error');
@@ -2187,6 +2334,330 @@ function renderMemberPicker() {
 /* =============================================================
    MAIN UI — HEADER + KANBAN
    ============================================================= */
+function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">Kanban Board</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Pantau progress tugas tim — B2C · Online · Optimize Process</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-primary" id="btn-new-task">+ Tugas Baru</button>
+      </div>
+    </div>
+    <div class="filter-strip">
+      <div class="filter-group">
+        <span class="filter-group-label">Tanggal</span>
+        <div class="date-control">
+          <button class="date-nav" id="date-prev" title="Hari sebelumnya">‹</button>
+          <input type="date" id="date-input" class="date-input" value="${STATE.selectedDate}">
+          <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
+          <button class="date-today-btn" id="date-today">Hari ini</button>
+        </div>
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Kategori</span>
+        <button class="chip ${STATE.filterCategoryId === null ? 'active' : ''}" data-filter-category="">Semua</button>
+        ${CATEGORIES.map(c => `
+          <button class="chip ${STATE.filterCategoryId === c.id ? 'active' : ''}" data-filter-category="${c.id}" style="${STATE.filterCategoryId === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)}</button>
+        `).join('')}
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Anggota</span>
+        <div class="chip-row" id="member-filter-chips">${allChip}${memberChips}</div>
+      </div>
+      ${STATE.labels.length > 0 ? `
+        <div class="filter-divider"></div>
+        <div class="filter-group">
+          <span class="filter-group-label">Label</span>
+          ${labelFilterHtml}
+        </div>
+      ` : ''}
+    </div>
+    <div id="kanban-root"></div>
+  `;
+}
+
+function renderRecapPageHtml() {
+  const rf = STATE.recapFilters;
+  const memberOpts = STATE.members.map(m =>
+    `<option value="${m.id}" ${rf.memberId === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('');
+  const catOpts = CATEGORIES.map(c =>
+    `<option value="${c.id}" ${rf.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">Rekap Tugas</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Daftar semua tugas — buat evaluasi & review tim</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-secondary" id="btn-recap-export">📊 Export</button>
+      </div>
+    </div>
+
+    <div id="recap-summary-root"></div>
+
+    <div class="filter-strip">
+      <div class="filter-group">
+        <span class="filter-group-label">Dari</span>
+        <input type="date" id="recap-from" class="input" style="width:auto;padding:6px 10px;font-size:13px" value="${rf.from}">
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Sampai</span>
+        <input type="date" id="recap-to" class="input" style="width:auto;padding:6px 10px;font-size:13px" value="${rf.to}">
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Status</span>
+        <select id="recap-status" class="select" style="width:auto;padding:6px 10px;font-size:13px">
+          <option value="all" ${rf.status === 'all' ? 'selected' : ''}>Semua</option>
+          <option value="unfinished" ${rf.status === 'unfinished' ? 'selected' : ''}>Belum selesai (Todo + Proses)</option>
+          <option value="todo" ${rf.status === 'todo' ? 'selected' : ''}>Todo</option>
+          <option value="proses" ${rf.status === 'proses' ? 'selected' : ''}>Proses</option>
+          <option value="done" ${rf.status === 'done' ? 'selected' : ''}>Done</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Anggota</span>
+        <select id="recap-member" class="select" style="width:auto;padding:6px 10px;font-size:13px">
+          <option value="">Semua</option>${memberOpts}
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Kategori</span>
+        <select id="recap-category" class="select" style="width:auto;padding:6px 10px;font-size:13px">
+          <option value="">Semua</option>${catOpts}
+        </select>
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group" style="flex:1;min-width:200px">
+        <span class="filter-group-label">Cari</span>
+        <input type="text" id="recap-search" class="input" placeholder="Ketik judul / deskripsi..." value="${escapeHtml(rf.search)}" style="flex:1">
+      </div>
+      <button class="btn btn-ghost btn-sm" id="recap-reset">Reset</button>
+    </div>
+
+    <div id="recap-table-root"></div>
+  `;
+}
+
+function getFilteredRecapTasks() {
+  const rf = STATE.recapFilters;
+  let tasks = STATE.tasks.filter(t => (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId);
+  if (rf.from) tasks = tasks.filter(t => (t.date || '') >= rf.from);
+  if (rf.to) tasks = tasks.filter(t => (t.date || '') <= rf.to);
+  if (rf.status === 'unfinished') tasks = tasks.filter(t => t.status !== 'done');
+  else if (rf.status !== 'all') tasks = tasks.filter(t => t.status === rf.status);
+  if (rf.memberId) tasks = tasks.filter(t => t.assigneeId === rf.memberId);
+  if (rf.categoryId) tasks = tasks.filter(t => t.category === rf.categoryId);
+  if (rf.search) {
+    const q = rf.search.toLowerCase();
+    tasks = tasks.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q));
+  }
+  // Sort
+  tasks.sort((a, b) => {
+    let va, vb;
+    switch (rf.sortBy) {
+      case 'title': va = (a.title || ''); vb = (b.title || ''); break;
+      case 'assignee': va = (a.assigneeName || ''); vb = (b.assigneeName || ''); break;
+      case 'status': va = a.status || ''; vb = b.status || ''; break;
+      case 'progress': va = a.progress || 0; vb = b.progress || 0; break;
+      case 'updated': va = a.updatedAt?.toMillis?.() || 0; vb = b.updatedAt?.toMillis?.() || 0; break;
+      default: va = a.date || ''; vb = b.date || ''; break;
+    }
+    if (va < vb) return rf.sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return rf.sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  return tasks;
+}
+
+function bindRecapFilters() {
+  const rf = STATE.recapFilters;
+  const bindInput = (id, prop, type = 'value') => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const ev = type === 'value' ? 'input' : 'change';
+    el.addEventListener(ev, () => {
+      const v = el.value;
+      rf[prop] = v;
+      renderRecapTable();
+    });
+  };
+  bindInput('recap-from', 'from');
+  bindInput('recap-to', 'to');
+  bindInput('recap-status', 'status');
+  bindInput('recap-search', 'search');
+  const memEl = document.getElementById('recap-member');
+  if (memEl) memEl.addEventListener('change', () => {
+    rf.memberId = memEl.value || null;
+    renderRecapTable();
+  });
+  const catEl = document.getElementById('recap-category');
+  if (catEl) catEl.addEventListener('change', () => {
+    rf.categoryId = catEl.value || null;
+    renderRecapTable();
+  });
+  const resetBtn = document.getElementById('recap-reset');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    STATE.recapFilters = {
+      from: '', to: '', status: 'all', memberId: null, categoryId: null,
+      search: '', sortBy: 'date', sortDir: 'desc',
+    };
+    renderMain();
+  });
+  const exportBtn = document.getElementById('btn-recap-export');
+  if (exportBtn) exportBtn.addEventListener('click', exportRecapData);
+}
+
+function exportRecapData() {
+  const tasks = getFilteredRecapTasks();
+  if (tasks.length === 0) { toast('Tidak ada data untuk export', 'error'); return; }
+  const header = ['Tanggal', 'Kategori', 'Judul', 'Pelaksana', 'Status', 'Progress', 'Deadline', 'Diubah'];
+  const rows = tasks.map(t => {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    return [
+      t.date || '',
+      cat ? cat.name : '',
+      t.title || '',
+      t.assigneeName || '',
+      (t.status || '').toUpperCase(),
+      `${t.progress || 0}%`,
+      t.dueDate || '',
+      tsToIso(t.updatedAt),
+    ];
+  });
+  const csv = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+  const filename = `rekap_tugas_${todayStr()}.csv`;
+  downloadFile(filename, csv, 'text/csv');
+  toast(`Exported ${tasks.length} tugas`, 'success');
+}
+
+function renderRecapTable() {
+  const root = document.getElementById('recap-table-root');
+  if (!root) return;
+  const tasks = getFilteredRecapTasks();
+  const rf = STATE.recapFilters;
+
+  // Summary
+  const total = tasks.length;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const prosesCount = tasks.filter(t => t.status === 'proses').length;
+  const todoCount = tasks.filter(t => t.status === 'todo').length;
+  const completionPct = total > 0 ? Math.round(doneCount * 100 / total) : 0;
+  const summaryRoot = document.getElementById('recap-summary-root');
+  if (summaryRoot) {
+    summaryRoot.innerHTML = `
+      <div class="recap-summary">
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">Total Tugas</div>
+          <div class="recap-summary-value">${total}</div>
+          <div class="recap-summary-detail">Pada filter aktif</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">Selesai</div>
+          <div class="recap-summary-value" style="color:var(--success)">${doneCount}</div>
+          <div class="recap-summary-detail">${completionPct}% completion rate</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">Sedang Proses</div>
+          <div class="recap-summary-value" style="color:var(--warning)">${prosesCount}</div>
+          <div class="recap-summary-detail">Aktif dikerjakan</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">Belum Mulai</div>
+          <div class="recap-summary-value" style="color:var(--info)">${todoCount}</div>
+          <div class="recap-summary-detail">Status TODO</div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (tasks.length === 0) {
+    root.innerHTML = `
+      <div class="recap-table-wrap">
+        <div class="recap-table-empty">
+          📭 Tidak ada tugas yang cocok dengan filter
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const colHeader = (key, label) => {
+    const isSorted = rf.sortBy === key;
+    const dirClass = isSorted ? (rf.sortDir === 'asc' ? 'sorted asc' : 'sorted') : '';
+    return `<th class="${dirClass}" data-sort="${key}">${label}</th>`;
+  };
+
+  const rows = tasks.map(t => {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const catBadge = cat
+      ? `<span class="category-badge" style="color:${cat.color};margin:0">${escapeHtml(cat.short || cat.name)}</span>`
+      : '<span style="color:var(--text-light);font-size:11px">—</span>';
+    const progress = Number(t.progress) || 0;
+    const updatedTime = timeAgo(t.updatedAt || t.createdAt);
+    const dueBadge = t.dueDate ? `<span style="font-family:var(--font-mono);font-size:11.5px">${t.dueDate.slice(5)}</span>` : '<span style="color:var(--text-light)">—</span>';
+    return `
+      <tr data-recap-task="${t.id}">
+        <td class="cell-date">${t.date || '—'}</td>
+        <td>${catBadge}</td>
+        <td class="cell-title">${escapeHtml(t.title || '')}</td>
+        <td>
+          <span style="display:inline-flex;align-items:center;gap:6px">
+            ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
+          </span>
+        </td>
+        <td><span class="status-pill ${t.status || 'todo'}">${(t.status || 'todo').toUpperCase()}</span></td>
+        <td>
+          <span class="mini-progress"><span class="mini-progress-fill" style="width:${progress}%;background:${progress === 100 ? 'var(--success)' : (progress > 0 ? 'var(--warning)' : 'var(--text-light)')}"></span></span>
+          <span style="font-size:12px;font-variant-numeric:tabular-nums">${progress}%</span>
+        </td>
+        <td>${dueBadge}</td>
+        <td style="color:var(--text-muted);font-size:12px">${updatedTime}</td>
+      </tr>
+    `;
+  }).join('');
+
+  root.innerHTML = `
+    <div class="recap-table-wrap">
+      <table class="recap-table">
+        <thead>
+          <tr>
+            ${colHeader('date', 'Tanggal')}
+            <th>Kategori</th>
+            ${colHeader('title', 'Judul Tugas')}
+            ${colHeader('assignee', 'Pelaksana')}
+            ${colHeader('status', 'Status')}
+            ${colHeader('progress', 'Progress')}
+            <th>Deadline</th>
+            ${colHeader('updated', 'Diubah')}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  // Bind row click → open task modal
+  root.querySelectorAll('[data-recap-task]').forEach(tr => {
+    tr.addEventListener('click', () => openTaskModal(tr.dataset.recapTask));
+  });
+  // Bind sortable headers
+  root.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (rf.sortBy === key) rf.sortDir = rf.sortDir === 'asc' ? 'desc' : 'asc';
+      else { rf.sortBy = key; rf.sortDir = 'desc'; }
+      renderRecapTable();
+    });
+  });
+}
+
 function renderMain() {
   const me = STATE.currentMember;
   const isAdmin = me?.role === 'admin';
@@ -2240,8 +2711,11 @@ function renderMain() {
           <div class="sidebar-title">Team Tracker</div>
         </div>
         <nav class="sidebar-nav">
-          <button class="sidebar-nav-item active" data-nav="kanban">
+          <button class="sidebar-nav-item ${STATE.currentView === 'kanban' ? 'active' : ''}" data-nav="kanban">
             <span class="sidebar-nav-icon">📋</span>Kanban Board
+          </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'recap' ? 'active' : ''}" data-nav="recap">
+            <span class="sidebar-nav-icon">📊</span>Rekap Tugas
           </button>
           ${isAdmin ? `
             <button class="sidebar-nav-item" data-nav="members">
@@ -2295,61 +2769,24 @@ function renderMain() {
         </header>
 
         <div class="page-content">
-          <div class="page-title-row">
-            <div>
-              <h1 class="page-title">Kanban Board</h1>
-              <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Pantau progress tugas tim — B2C · Online · Optimize Process</div>
-            </div>
-            <div class="page-toolbar">
-              <button class="btn btn-primary" id="btn-new-task">+ Tugas Baru</button>
-            </div>
-          </div>
-
-          <div class="filter-strip">
-            <div class="filter-group">
-              <span class="filter-group-label">Tanggal</span>
-              <div class="date-control">
-                <button class="date-nav" id="date-prev" title="Hari sebelumnya">‹</button>
-                <input type="date" id="date-input" class="date-input" value="${STATE.selectedDate}">
-                <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
-                <button class="date-today-btn" id="date-today">Hari ini</button>
-              </div>
-            </div>
-            <div class="filter-divider"></div>
-            <div class="filter-group">
-              <span class="filter-group-label">Kategori</span>
-              <button class="chip ${STATE.filterCategoryId === null ? 'active' : ''}" data-filter-category="">Semua</button>
-              ${CATEGORIES.map(c => `
-                <button class="chip ${STATE.filterCategoryId === c.id ? 'active' : ''}" data-filter-category="${c.id}" style="${STATE.filterCategoryId === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)}</button>
-              `).join('')}
-            </div>
-            <div class="filter-divider"></div>
-            <div class="filter-group">
-              <span class="filter-group-label">Anggota</span>
-              <div class="chip-row" id="member-filter-chips">${allChip}${memberChips}</div>
-            </div>
-            ${STATE.labels.length > 0 ? `
-              <div class="filter-divider"></div>
-              <div class="filter-group">
-                <span class="filter-group-label">Label</span>
-                ${labelFilterHtml}
-              </div>
-            ` : ''}
-          </div>
-
-          <div id="kanban-root"></div>
+          ${STATE.currentView === 'recap'
+            ? renderRecapPageHtml()
+            : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)}
         </div>
       </main>
     </div>
   `;
 
-  // Bind events
-  document.getElementById('date-prev').addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, -1); subscribeTasks(); renderMain(); });
-  document.getElementById('date-next').addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, 1); subscribeTasks(); renderMain(); });
-  document.getElementById('date-today').addEventListener('click', () => { STATE.selectedDate = todayStr(); subscribeTasks(); renderMain(); });
-  document.getElementById('date-input').addEventListener('change', (e) => {
+  // Bind events — date controls only ada di view kanban
+  const datePrev = document.getElementById('date-prev');
+  const dateNext = document.getElementById('date-next');
+  const dateToday = document.getElementById('date-today');
+  const dateInput = document.getElementById('date-input');
+  if (datePrev) datePrev.addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, -1); renderMain(); });
+  if (dateNext) dateNext.addEventListener('click', () => { STATE.selectedDate = shiftDate(STATE.selectedDate, 1); renderMain(); });
+  if (dateToday) dateToday.addEventListener('click', () => { STATE.selectedDate = todayStr(); renderMain(); });
+  if (dateInput) dateInput.addEventListener('change', (e) => {
     STATE.selectedDate = e.target.value || todayStr();
-    subscribeTasks();
     renderMain();
   });
   document.querySelectorAll('[data-filter-member]').forEach(btn => {
@@ -2382,14 +2819,25 @@ function renderMain() {
     });
   });
 
-  document.getElementById('btn-new-task').addEventListener('click', () => openTaskModal());
+  // Buttons only available in kanban view
+  const newTaskBtn = document.getElementById('btn-new-task');
+  if (newTaskBtn) newTaskBtn.addEventListener('click', () => openTaskModal());
 
   // Sidebar navigation
   document.querySelectorAll('[data-nav]').forEach(btn => {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
-      switch (btn.dataset.nav) {
-        case 'kanban': /* already showing */ break;
+      const target = btn.dataset.nav;
+      // View switches
+      if (target === 'kanban' || target === 'recap') {
+        if (STATE.currentView !== target) {
+          STATE.currentView = target;
+          renderMain();
+        }
+        return;
+      }
+      // Modal-based navs
+      switch (target) {
         case 'boards': openBoardsModal(); break;
         case 'members': openMembersModal(); break;
         case 'labels': openLabelsModal(); break;
@@ -2399,6 +2847,12 @@ function renderMain() {
       }
     });
   });
+
+  // Recap view bindings (only if currentView=recap)
+  if (STATE.currentView === 'recap') {
+    bindRecapFilters();
+    renderRecapTable();
+  }
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', () => {
@@ -2558,6 +3012,16 @@ function renderTaskCard(t) {
     ? `<span class="category-badge" style="color:${cat.color}">${escapeHtml(cat.name)}</span>`
     : '';
 
+  // Carry-over badge — kalau task dari tanggal lampau, status != done, & lagi lihat "hari ini"
+  const today = todayStr();
+  const isCarryOver = STATE.selectedDate === today
+    && t.date && t.date < today
+    && t.status !== 'done';
+  const carryoverHtml = isCarryOver ? (() => {
+    const [y, m, d] = t.date.split('-');
+    return `<span class="carryover-badge">⏪ Carry-over dari ${d}/${m}</span>`;
+  })() : '';
+
   // Labels
   const taskLabels = (t.labelIds || [])
     .map(id => STATE.labels.find(l => l.id === id))
@@ -2607,6 +3071,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
+        ${carryoverHtml}
         ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
