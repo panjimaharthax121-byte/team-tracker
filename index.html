@@ -335,33 +335,6 @@
   }
   .task-card.col-done { border-left: 3px solid var(--success); }
   .task-card.col-proses { border-left: 3px solid var(--warning); }
-  .task-card.task-locked {
-    background: #fafbfc;
-    cursor: default;
-  }
-  .task-card.task-locked::after {
-    content: '🔒';
-    position: absolute;
-    top: 6px;
-    right: 8px;
-    font-size: 11px;
-    opacity: 0.45;
-  }
-  .task-card.task-locked:hover {
-    transform: none;
-    box-shadow: var(--shadow-sm);
-  }
-  .readonly-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 9px;
-    background: var(--bg-col);
-    color: var(--text-muted);
-    border-radius: 100px;
-    font-size: 11px;
-    font-weight: 600;
-  }
   .task-card-title {
     font-size: 13.5px;
     font-weight: 600;
@@ -750,7 +723,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = null;
+const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -816,20 +789,6 @@ function avatarHtml(name, sizeClass = '') {
 }
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-// === Permission helpers ===
-// Member cuma bisa edit/hapus task miliknya sendiri. Admin bisa ke semua.
-function canEditTask(task) {
-  const me = STATE.currentMember;
-  if (!me || !task) return false;
-  if (me.role === 'admin') return true;
-  return task.assigneeId === me.id;
-}
-function canDeleteTask(task) {
-  const me = STATE.currentMember;
-  if (!me || !task) return false;
-  return me.role === 'admin';
 }
 
 /* =============================================================
@@ -1361,18 +1320,12 @@ function renderKanban() {
     });
   });
 
-  // Drag-drop — hanya enable untuk task yg user bisa edit
+  // Drag-drop
   root.querySelectorAll('[data-task-id]').forEach(card => {
-    const taskId = card.dataset.taskId;
-    const task = STATE.tasks.find(t => t.id === taskId);
-    if (!canEditTask(task)) {
-      card.draggable = false;
-      return;
-    }
     card.draggable = true;
     card.addEventListener('dragstart', (e) => {
       card.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', taskId);
+      e.dataTransfer.setData('text/plain', card.dataset.taskId);
       e.dataTransfer.effectAllowed = 'move';
     });
     card.addEventListener('dragend', () => card.classList.remove('dragging'));
@@ -1387,10 +1340,6 @@ function renderKanban() {
       const newStatus = col.dataset.col;
       const task = STATE.tasks.find(t => t.id === taskId);
       if (!task || task.status === newStatus) return;
-      if (!canEditTask(task)) {
-        toast('Kamu cuma bisa ubah status task kamu sendiri', 'error');
-        return;
-      }
       await updateTaskStatus(taskId, newStatus);
     });
   });
@@ -1406,9 +1355,8 @@ function renderTaskCard(t) {
   const assigneeName = assignee?.name || t.assigneeName || '?';
   const commentCount = (t.comments || []).length;
   const desc = t.description ? `<div class="task-card-desc">${escapeHtml(t.description)}</div>` : '';
-  const locked = !canEditTask(t);
   return `
-    <div class="task-card col-${t.status || 'todo'} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
+    <div class="task-card col-${t.status || 'todo'}" data-task-id="${t.id}">
       <div class="task-card-title">${escapeHtml(t.title)}</div>
       ${desc}
       <div class="task-card-meta">
@@ -1431,11 +1379,6 @@ function openTaskModal(taskId = null, presets = {}) {
   const me = STATE.currentMember;
   const isAdmin = me.role === 'admin';
 
-  // Permission: kalau lagi edit & member tidak punya task → read-only mode
-  const canEdit = isEdit ? canEditTask(task) : true;
-  const canDelete = isEdit ? canDeleteTask(task) : false;
-  const readOnly = isEdit && !canEdit;
-
   // Default assignee: me (kalau create), atau dari task (kalau edit)
   const defaultAssigneeId = task?.assigneeId || me.id;
 
@@ -1447,33 +1390,27 @@ function openTaskModal(taskId = null, presets = {}) {
     `<option value="${s}" ${((task?.status || presets.status || 'todo') === s) ? 'selected' : ''}>${s.toUpperCase()}</option>`
   ).join('');
 
-  // Non-admin can only assign to self (saat create); read-only dipakai untuk edit task orang lain
-  const canChangeAssignee = isAdmin && !readOnly;
-  const disabledAttr = readOnly ? 'disabled' : '';
+  // Non-admin can only assign to self
+  const canChangeAssignee = isAdmin;
 
   const html = `
     <div class="modal-header">
-      <div style="display:flex;align-items:center;gap:10px;flex:1">
-        <div class="modal-title">
-          ${isEdit ? (readOnly ? '👁️ Lihat Tugas' : 'Edit Tugas') : 'Tugas Baru'}
-        </div>
-        ${readOnly ? `<span class="readonly-badge">🔒 Read-only — bukan task kamu</span>` : ''}
-      </div>
+      <div class="modal-title">${isEdit ? 'Edit Tugas' : 'Tugas Baru'}</div>
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
       <div class="form-group">
         <label class="label">Judul Tugas</label>
-        <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(task?.title || '')}" autocomplete="off" ${disabledAttr}>
+        <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(task?.title || '')}" autocomplete="off">
       </div>
       <div class="form-group">
         <label class="label">Deskripsi (opsional)</label>
-        <textarea id="t-desc" class="textarea" placeholder="Detail tugas..." ${disabledAttr}>${escapeHtml(task?.description || '')}</textarea>
+        <textarea id="t-desc" class="textarea" placeholder="Detail tugas...">${escapeHtml(task?.description || '')}</textarea>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
         <div class="form-group">
           <label class="label">Status</label>
-          <select id="t-status" class="select" ${disabledAttr}>${statusOpts}</select>
+          <select id="t-status" class="select">${statusOpts}</select>
         </div>
         <div class="form-group">
           <label class="label">Pelaksana</label>
@@ -1481,7 +1418,7 @@ function openTaskModal(taskId = null, presets = {}) {
         </div>
         <div class="form-group">
           <label class="label">Tanggal</label>
-          <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
+          <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}">
         </div>
       </div>
 
@@ -1489,20 +1426,13 @@ function openTaskModal(taskId = null, presets = {}) {
       ${isEdit ? renderCommentsSection(task) : ''}
     </div>
     <div class="modal-footer">
-      ${isEdit && canDelete ? `<button class="btn btn-danger" id="t-delete" style="margin-right:auto">Hapus</button>` : ''}
-      <button class="btn btn-ghost" data-close-modal>${readOnly ? 'Tutup' : 'Batal'}</button>
-      ${readOnly ? '' : `<button class="btn btn-primary" id="t-save">${isEdit ? 'Simpan' : 'Buat Tugas'}</button>`}
+      ${isEdit ? `<button class="btn btn-danger" id="t-delete" style="margin-right:auto">Hapus</button>` : ''}
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="t-save">${isEdit ? 'Simpan' : 'Buat Tugas'}</button>
     </div>
   `;
 
   showModal(html, { size: 'lg' });
-
-  // Read-only mode: no save handler, tetap bisa comment
-  if (readOnly) {
-    if (isEdit) bindCommentForm(task);
-    if (isEdit) bindCommentDelete(task);
-    return;
-  }
 
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
@@ -1545,19 +1475,16 @@ function openTaskModal(taskId = null, presets = {}) {
   });
 
   if (isEdit) {
-    const delBtn = document.getElementById('t-delete');
-    if (delBtn) {
-      delBtn.addEventListener('click', async () => {
-        if (!confirm(`Hapus tugas "${task.title}"?`)) return;
-        try {
-          await deleteDoc(doc(STATE.db, 'tasks', task.id));
-          toast('Tugas dihapus', 'success');
-          closeModal();
-        } catch (err) {
-          toast('Gagal hapus: ' + err.message, 'error');
-        }
-      });
-    }
+    document.getElementById('t-delete').addEventListener('click', async () => {
+      if (!confirm(`Hapus tugas "${task.title}"?`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'tasks', task.id));
+        toast('Tugas dihapus', 'success');
+        closeModal();
+      } catch (err) {
+        toast('Gagal hapus: ' + err.message, 'error');
+      }
+    });
 
     // Comment form binding
     bindCommentForm(task);
