@@ -1926,6 +1926,15 @@ function canDeleteTask(task) {
   if (!me || !task) return false;
   return me.role === 'admin';
 }
+// Granular permission per member untuk Labels/Templates/Members
+// Admin auto-true; member di-set oleh admin via Data Pengguna modal.
+// permissions = { labels: bool, templates: bool, members: bool }
+function hasPerm(perm) {
+  const me = STATE.currentMember;
+  if (!me) return false;
+  if (me.role === 'admin') return true;
+  return !!(me.permissions && me.permissions[perm]);
+}
 
 // === Progress ↔ Status mapping ===
 // 0% = TODO, 1-99% = PROSES, 100% = DONE
@@ -3158,20 +3167,16 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'calendar' ? 'active' : ''}" data-nav="calendar">
             <span class="sidebar-nav-icon">📅</span>Kalender Tugas
           </button>
-          ${isAdmin ? `
-            <button class="sidebar-nav-item" data-nav="members">
-              <span class="sidebar-nav-icon">👥</span>Data Pengguna
-            </button>
-          ` : ''}
-          ${isAdmin ? `
-            <div class="sidebar-nav-section">Konfigurasi</div>
-            <button class="sidebar-nav-item" data-nav="labels">
-              <span class="sidebar-nav-icon">🏷️</span>Labels
-            </button>
-            <button class="sidebar-nav-item" data-nav="templates">
-              <span class="sidebar-nav-icon">📋</span>Template
-            </button>
-          ` : ''}
+          <button class="sidebar-nav-item" data-nav="members">
+            <span class="sidebar-nav-icon">👥</span>Data Pengguna
+          </button>
+          <div class="sidebar-nav-section">Konfigurasi</div>
+          <button class="sidebar-nav-item" data-nav="labels">
+            <span class="sidebar-nav-icon">🏷️</span>Labels
+          </button>
+          <button class="sidebar-nav-item" data-nav="templates">
+            <span class="sidebar-nav-icon">📋</span>Template
+          </button>
           <div class="sidebar-nav-section">Tools</div>
           <button class="sidebar-nav-item" data-nav="export">
             <span class="sidebar-nav-icon">📊</span>Export Data
@@ -4266,54 +4271,108 @@ async function updateTaskStatus(taskId, newStatus) {
    ============================================================= */
 function openMembersModal() {
   const me = STATE.currentMember;
-  if (me.role !== 'admin') return;
+  const canManage = hasPerm('members'); // admin atau member dengan permission
 
   const list = STATE.members.map(m => {
     const isMe = m.id === me.id;
+    const perms = m.permissions || {};
+    const isAdminRow = m.role === 'admin';
     return `
-      <div class="member-row">
-        ${avatarHtml(m.name, 'avatar-lg')}
-        <div class="member-info">
-          <div class="member-name">${escapeHtml(m.name)} ${isMe ? '<span style="font-size:11px;color:var(--text-muted)">(kamu)</span>' : ''}</div>
-          <div class="member-meta">${m.role === 'admin' ? '<span class="admin-pill">Admin</span>' : 'Member'}</div>
+      <div class="member-row" style="display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          ${avatarHtml(m.name, 'avatar-lg')}
+          <div class="member-info" style="flex:1">
+            <div class="member-name">${escapeHtml(m.name)} ${isMe ? '<span style="font-size:11px;color:var(--text-muted)">(kamu)</span>' : ''}</div>
+            <div class="member-meta">${isAdminRow ? '<span class="admin-pill">Admin</span>' : 'Member'}</div>
+          </div>
+          <div class="member-actions">
+            ${canManage && !isMe ? `
+              <button class="btn btn-secondary btn-sm" data-toggle-role="${m.id}">
+                ${isAdminRow ? 'Jadikan Member' : 'Jadikan Admin'}
+              </button>
+              <button class="btn btn-danger btn-sm" data-del-member="${m.id}">Hapus</button>
+            ` : ''}
+          </div>
         </div>
-        <div class="member-actions">
-          ${!isMe ? `
-            <button class="btn btn-secondary btn-sm" data-toggle-role="${m.id}">
-              ${m.role === 'admin' ? 'Jadikan Member' : 'Jadikan Admin'}
-            </button>
-            <button class="btn btn-danger btn-sm" data-del-member="${m.id}">Hapus</button>
-          ` : ''}
-        </div>
+        ${!isAdminRow ? `
+          <div style="padding:10px 12px;background:var(--bg-col);border-radius:var(--radius-sm);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+            <span style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:0.5px">Izin Edit</span>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:${me.role === 'admin' ? 'pointer' : 'default'}">
+              <input type="checkbox" data-perm="${m.id}:labels" ${perms.labels ? 'checked' : ''} ${me.role === 'admin' ? '' : 'disabled'} style="width:14px;height:14px;cursor:inherit">
+              🏷️ Labels
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:${me.role === 'admin' ? 'pointer' : 'default'}">
+              <input type="checkbox" data-perm="${m.id}:templates" ${perms.templates ? 'checked' : ''} ${me.role === 'admin' ? '' : 'disabled'} style="width:14px;height:14px;cursor:inherit">
+              📋 Templates
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:${me.role === 'admin' ? 'pointer' : 'default'}">
+              <input type="checkbox" data-perm="${m.id}:members" ${perms.members ? 'checked' : ''} ${me.role === 'admin' ? '' : 'disabled'} style="width:14px;height:14px;cursor:inherit">
+              👥 Anggota
+            </label>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">Anggota Tim</div>
+      <div class="modal-title">Data Pengguna</div>
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
-      <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;margin-bottom:18px">
-        <div style="flex:1">
-          <label class="label">Tambah Anggota Baru</label>
-          <input id="new-member-name" class="input" placeholder="Nama anggota baru" autocomplete="off">
+      ${canManage ? `
+        <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;margin-bottom:18px">
+          <div style="flex:1">
+            <label class="label">Tambah Anggota Baru</label>
+            <input id="new-member-name" class="input" placeholder="Nama anggota baru" autocomplete="off">
+          </div>
+          <select id="new-member-role" class="select" style="width:auto">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button class="btn btn-primary" id="new-member-add">+ Tambah</button>
         </div>
-        <select id="new-member-role" class="select" style="width:auto">
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button class="btn btn-primary" id="new-member-add">+ Tambah</button>
-      </div>
+      ` : `
+        <div style="margin-bottom:14px;padding:10px 14px;background:var(--bg-col);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted)">
+          👁️ Mode lihat saja — hanya admin yang bisa ubah role, tambah/hapus anggota, atau set izin edit.
+        </div>
+      `}
       <div class="member-list">${list}</div>
+      ${me.role === 'admin' ? `
+        <div style="margin-top:12px;padding:10px 14px;background:var(--info-light);border-radius:var(--radius-sm);font-size:12px;color:#1d4ed8">
+          💡 Centang/uncentang izin di atas untuk kasih akses edit Labels/Templates/Anggota ke member tertentu.
+        </div>
+      ` : ''}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close-modal>Tutup</button>
     </div>
   `, { size: 'lg' });
 
-  document.getElementById('new-member-add').addEventListener('click', async () => {
+  if (!canManage) return;
+
+  // Permission checkbox handler (admin only)
+  if (me.role === 'admin') {
+    document.querySelectorAll('[data-perm]').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        const [memberId, perm] = cb.dataset.perm.split(':');
+        const member = STATE.members.find(m => m.id === memberId);
+        if (!member) return;
+        const newPerms = { ...(member.permissions || {}), [perm]: cb.checked };
+        try {
+          await updateDoc(doc(STATE.db, 'members', memberId), { permissions: newPerms });
+          toast(`Izin ${perm} ${member.name}: ${cb.checked ? 'diaktifkan' : 'dimatikan'}`, 'success');
+        } catch (err) {
+          toast('Gagal: ' + err.message, 'error');
+          cb.checked = !cb.checked;
+        }
+      });
+    });
+  }
+
+  const addBtn = document.getElementById('new-member-add');
+  if (addBtn) addBtn.addEventListener('click', async () => {
     const name = document.getElementById('new-member-name').value.trim();
     const role = document.getElementById('new-member-role').value;
     if (!name) { toast('Nama wajib diisi', 'error'); return; }
@@ -4322,11 +4381,10 @@ function openMembersModal() {
     }
     try {
       await addDoc(collection(STATE.db, 'members'), {
-        name, role, active: true, createdAt: serverTimestamp(),
+        name, role, active: true, permissions: {}, createdAt: serverTimestamp(),
       });
       toast(`${name} ditambahkan`, 'success');
       closeModal();
-      // Listener will refresh
       setTimeout(openMembersModal, 100);
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
@@ -4581,12 +4639,10 @@ function openBoardsModal() {
 }
 
 /* =============================================================
-   LABELS MODAL (admin only)
+   LABELS MODAL
    ============================================================= */
 function openLabelsModal() {
-  const me = STATE.currentMember;
-  if (me.role !== 'admin') return;
-
+  const canEdit = hasPerm('labels');
   const board = STATE.boards.find(b => b.id === STATE.currentBoardId);
   if (!board) return;
 
@@ -4603,8 +4659,10 @@ function openLabelsModal() {
           <div class="member-meta">${taskCount} task pada tanggal aktif</div>
         </div>
         <div class="member-actions">
-          <button class="btn btn-secondary btn-sm" data-rename-label="${l.id}">Rename</button>
-          <button class="btn btn-danger btn-sm" data-del-label="${l.id}">Hapus</button>
+          ${canEdit ? `
+            <button class="btn btn-secondary btn-sm" data-rename-label="${l.id}">Rename</button>
+            <button class="btn btn-danger btn-sm" data-del-label="${l.id}">Hapus</button>
+          ` : ''}
         </div>
       </div>
     `;
@@ -4612,28 +4670,32 @@ function openLabelsModal() {
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">🏷️ Kelola Labels — ${escapeHtml(board.name)}</div>
+      <div class="modal-title">🏷️ Labels</div>
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
-        Labels khusus untuk board ini. Bisa dipakai buat tag task (mis: Urgent, Routine, Pelaporan).
+        Labels dipakai untuk tag task (mis: Segera, Harian, Mingguan, dll). ${canEdit ? '' : '<strong>Mode lihat saja</strong> — minta admin untuk kasih izin edit.'}
       </p>
-      <div style="margin-bottom:18px;padding:12px 14px;background:var(--bg-col);border-radius:var(--radius)">
-        <label class="label">Bikin Label Baru</label>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <input id="new-label-name" class="input" placeholder="Mis: Urgent, Routine" style="flex:1;min-width:160px">
-          <div class="color-picker" id="new-label-colors">${colorOpts}</div>
+      ${canEdit ? `
+        <div style="margin-bottom:18px;padding:12px 14px;background:var(--bg-col);border-radius:var(--radius)">
+          <label class="label">Bikin Label Baru</label>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <input id="new-label-name" class="input" placeholder="Mis: Urgent, Routine" style="flex:1;min-width:160px">
+            <div class="color-picker" id="new-label-colors">${colorOpts}</div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="new-label-add" style="margin-top:10px">+ Bikin Label</button>
         </div>
-        <button class="btn btn-primary btn-sm" id="new-label-add" style="margin-top:10px">+ Bikin Label</button>
-      </div>
-      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Labels di Board "${escapeHtml(board.name)}"</h4>
-      ${STATE.labels.length === 0 ? '<div style="color:var(--text-light);font-size:13px;text-align:center;padding:20px">Belum ada label. Bikin satu di atas.</div>' : `<div class="member-list">${list}</div>`}
+      ` : ''}
+      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Daftar Labels</h4>
+      ${STATE.labels.length === 0 ? '<div style="color:var(--text-light);font-size:13px;text-align:center;padding:20px">Belum ada label.</div>' : `<div class="member-list">${list}</div>`}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close-modal>Tutup</button>
     </div>
   `, { size: 'lg' });
+
+  if (!canEdit) return;
 
   let selectedColor = PALETTE[0].value;
   document.querySelectorAll('[data-new-label-color]').forEach(btn => {
@@ -4692,12 +4754,10 @@ function openLabelsModal() {
 }
 
 /* =============================================================
-   TEMPLATES MODAL (admin only)
+   TEMPLATES MODAL
    ============================================================= */
 function openTemplatesModal() {
-  const me = STATE.currentMember;
-  if (me.role !== 'admin') return;
-
+  const canEdit = hasPerm('templates');
   const board = STATE.boards.find(b => b.id === STATE.currentBoardId);
   if (!board) return;
 
@@ -4726,8 +4786,12 @@ function openTemplatesModal() {
           </div>
         </div>
         <div class="member-actions">
-          <button class="btn btn-secondary btn-sm" data-edit-tpl="${t.id}">Edit</button>
-          <button class="btn btn-danger btn-sm" data-del-tpl="${t.id}">Hapus</button>
+          ${canEdit ? `
+            <button class="btn btn-secondary btn-sm" data-edit-tpl="${t.id}">Edit</button>
+            <button class="btn btn-danger btn-sm" data-del-tpl="${t.id}">Hapus</button>
+          ` : `
+            <button class="btn btn-ghost-soft btn-sm" data-view-tpl="${t.id}">👁️ Lihat</button>
+          `}
         </div>
       </div>
     `;
@@ -4735,15 +4799,15 @@ function openTemplatesModal() {
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">📋 Kelola Templates — ${escapeHtml(board.name)}</div>
+      <div class="modal-title">📋 Templates</div>
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
-        Template dipakai saat bikin task baru — tinggal pilih, judul & checklist akan terisi otomatis.
+        Template dipakai saat bikin task baru atau auto-generate harian/mingguan/bulanan. ${canEdit ? '' : '<strong>Mode lihat saja</strong> — minta admin untuk kasih izin edit.'}
       </p>
-      <button class="btn btn-primary" id="new-tpl-btn" style="margin-bottom:18px">+ Bikin Template Baru</button>
-      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Templates di Board "${escapeHtml(board.name)}"</h4>
+      ${canEdit ? `<button class="btn btn-primary" id="new-tpl-btn" style="margin-bottom:18px">+ Bikin Template Baru</button>` : ''}
+      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Daftar Templates</h4>
       ${STATE.templates.length === 0 ? '<div style="color:var(--text-light);font-size:13px;text-align:center;padding:20px">Belum ada template.</div>' : `<div class="member-list">${list}</div>`}
     </div>
     <div class="modal-footer">
@@ -4751,24 +4815,78 @@ function openTemplatesModal() {
     </div>
   `, { size: 'lg' });
 
-  document.getElementById('new-tpl-btn').addEventListener('click', () => openTemplateEditor(null));
-  document.querySelectorAll('[data-edit-tpl]').forEach(btn => {
-    btn.addEventListener('click', () => openTemplateEditor(btn.dataset.editTpl));
-  });
-  document.querySelectorAll('[data-del-tpl]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.delTpl;
-      const t = STATE.templates.find(x => x.id === id);
-      if (!confirm(`Hapus template "${t.name}"?`)) return;
-      try {
-        await deleteDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', id));
-        toast('Template dihapus', 'success');
-        setTimeout(openTemplatesModal, 200);
-      } catch (err) {
-        toast('Gagal: ' + err.message, 'error');
-      }
+  if (canEdit) {
+    document.getElementById('new-tpl-btn').addEventListener('click', () => openTemplateEditor(null));
+    document.querySelectorAll('[data-edit-tpl]').forEach(btn => {
+      btn.addEventListener('click', () => openTemplateEditor(btn.dataset.editTpl));
     });
-  });
+    document.querySelectorAll('[data-del-tpl]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.delTpl;
+        const t = STATE.templates.find(x => x.id === id);
+        if (!confirm(`Hapus template "${t.name}"?`)) return;
+        try {
+          await deleteDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', id));
+          toast('Template dihapus', 'success');
+          setTimeout(openTemplatesModal, 200);
+        } catch (err) {
+          toast('Gagal: ' + err.message, 'error');
+        }
+      });
+    });
+  } else {
+    // View-only mode untuk member
+    document.querySelectorAll('[data-view-tpl]').forEach(btn => {
+      btn.addEventListener('click', () => openTemplateViewer(btn.dataset.viewTpl));
+    });
+  }
+}
+
+function openTemplateViewer(tplId) {
+  const tpl = STATE.templates.find(t => t.id === tplId);
+  if (!tpl) return;
+  const freqLabel = {
+    manual: 'Manual (pakai saat create task)',
+    daily: '🗓️ Harian — auto setiap hari',
+    weekly: '📆 Mingguan — auto tiap hari yang ditentukan',
+    monthly: '📅 Bulanan — auto tiap tanggal yang ditentukan',
+  };
+  const freq = tpl.frequency || 'manual';
+  const assignee = STATE.members.find(m => m.id === tpl.defaultAssigneeId);
+  const cat = CATEGORIES.find(c => c.id === tpl.defaultCategoryId);
+  const items = tpl.items || [];
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">👁️ ${escapeHtml(tpl.name)}</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="task-meta-row" style="display:flex;flex-direction:column;align-items:stretch;gap:6px">
+        <div><strong>Frekuensi:</strong> ${freqLabel[freq] || freq}</div>
+        ${assignee ? `<div><strong>Pelaksana default:</strong> ${escapeHtml(assignee.name)}</div>` : ''}
+        ${cat ? `<div><strong>Kategori default:</strong> ${escapeHtml(cat.name)}</div>` : ''}
+        <div><strong>Status:</strong> ${tpl.active === false ? 'Nonaktif' : 'Aktif'}</div>
+      </div>
+      <h4 class="comments-title" style="margin-top:14px">Item Tugas (${items.length})</h4>
+      ${items.length === 0 ? '<div style="color:var(--text-light);font-size:13px;padding:10px">Belum ada item.</div>' :
+        items.map((it, idx) => `
+          <div class="checklist-block" style="margin-bottom:8px">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:4px">${idx + 1}. ${escapeHtml(it.title || '')}</div>
+            ${it.description ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${escapeHtml(it.description)}</div>` : ''}
+            ${Array.isArray(it.checklist) && it.checklist.length > 0
+              ? `<div style="font-size:12px;color:var(--text);margin-top:6px">
+                  <div style="font-weight:600;font-size:11px;color:var(--text-muted);margin-bottom:4px">Checklist:</div>
+                  ${it.checklist.map(c => `<div style="padding-left:8px;line-height:1.5">☐ ${escapeHtml(c)}</div>`).join('')}
+                </div>`
+              : ''}
+          </div>
+        `).join('')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
 }
 
 function openTemplateEditor(tplId) {
