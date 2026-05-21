@@ -3,42 +3,49 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker — Tracking Kerjaan Tim</title>
+<title>Team Tracker — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #f5f7fb;
+    /* === APOTEKKU BRAND === */
+    --bg: #faf7f3;           /* warm off-white (soft latte) */
     --bg-card: #ffffff;
-    --bg-col: #eef1f6;
-    --border: #e2e8f0;
-    --border-strong: #cbd5e1;
-    --text: #0f172a;
-    --text-muted: #64748b;
-    --text-light: #94a3b8;
-    --primary: #3b82f6;
-    --primary-dark: #2563eb;
-    --primary-light: #dbeafe;
-    --success: #10b981;
-    --success-light: #d1fae5;
-    --warning: #f59e0b;
+    --bg-col: #f4f1ed;       /* sand */
+    --bg-sidebar: #f7f3ee;
+    --border: #e8e2da;
+    --border-strong: #d4cdc1;
+    --text: #1a1a1a;         /* ink */
+    --text-muted: #5c5851;
+    --text-light: #8b867d;
+    --primary: #dc2626;      /* ApotekKu red */
+    --primary-dark: #b91c1c;
+    --primary-light: #fde8e8;
+    --accent: #c87f1f;       /* warm amber (TaskPro-ish action) */
+    --accent-light: #fdf4e7;
+    --success: #16a34a;
+    --success-light: #dcfce7;
+    --warning: #d97706;
     --warning-light: #fef3c7;
-    --danger: #ef4444;
+    --danger: #dc2626;
     --danger-light: #fee2e2;
-    --purple: #8b5cf6;
-    --purple-light: #ede9fe;
+    --info: #2563eb;
+    --info-light: #dbeafe;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
-    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
-    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
-    --shadow-lg: 0 10px 30px rgba(0,0,0,0.12);
-    --radius: 10px;
-    --radius-sm: 6px;
-    --radius-lg: 14px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.10);
+    --radius: 14px;
+    --radius-sm: 8px;
+    --radius-lg: 18px;
+    --font-serif: 'Instrument Serif', Georgia, serif;
+    --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   }
   body {
-    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg);
     color: var(--text);
     font-size: 14px;
@@ -49,65 +56,269 @@
   button { font-family: inherit; cursor: pointer; border: none; background: none; }
   input, textarea, select { font-family: inherit; font-size: 14px; }
   input:focus, textarea:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  h1, h2, h3, h4, .serif-heading { font-family: var(--font-serif); font-weight: 400; letter-spacing: -0.01em; }
 
-  /* === LAYOUT === */
-  .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
-  .header {
-    background: #fff;
+  /* === APP LAYOUT (sidebar + main) === */
+  .app-shell {
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    transition: transform .25s;
+    z-index: 90;
+  }
+  .sidebar-brand {
+    padding: 22px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-logo {
+    width: 36px; height: 36px;
+    background: var(--primary);
+    border-radius: var(--radius-sm);
+    display: grid; place-items: center;
+    color: white;
+    box-shadow: 0 4px 12px rgba(220,38,38,0.25);
+    flex-shrink: 0;
+  }
+  .sidebar-logo svg { width: 20px; height: 20px; }
+  .sidebar-title {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  .sidebar-nav {
+    flex: 1;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+  }
+  .sidebar-nav-section {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    padding: 14px 12px 6px;
+  }
+  .sidebar-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+    width: 100%;
+  }
+  .sidebar-nav-item:hover {
+    background: rgba(0,0,0,0.04);
+    color: var(--text);
+  }
+  .sidebar-nav-item.active {
+    background: white;
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  .sidebar-nav-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+  }
+  .sidebar-bottom {
+    padding: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .sidebar-logout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--primary);
+    color: white;
+    border-radius: var(--radius-sm);
+    font-size: 13.5px;
+    font-weight: 600;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .sidebar-logout:hover {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+  }
+
+  /* === MAIN CONTENT === */
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* === TOPBAR === */
+  .topbar {
+    background: var(--bg-card);
     border-bottom: 1px solid var(--border);
-    padding: 12px 20px;
+    padding: 18px 32px;
     display: flex;
     align-items: center;
     gap: 16px;
-    flex-wrap: wrap;
     position: sticky;
     top: 0;
     z-index: 50;
   }
-  .header-brand {
+  .topbar-toggle {
+    width: 36px; height: 36px;
+    border-radius: var(--radius-sm);
+    display: none;
+    place-items: center;
+    color: var(--text-muted);
+    font-size: 20px;
+  }
+  .topbar-toggle:hover { background: var(--bg-col); }
+  .topbar-welcome { flex: 1; }
+  .topbar-welcome-title {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin-bottom: 2px;
+  }
+  .topbar-welcome-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .topbar-right {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-weight: 700;
-    font-size: 16px;
+    gap: 12px;
   }
-  .header-brand-icon {
-    width: 32px; height: 32px;
-    background: linear-gradient(135deg, var(--primary), var(--purple));
-    border-radius: 8px;
-    display: grid; place-items: center;
-    color: white;
-    font-size: 18px;
-  }
-  .header-controls {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    flex: 1;
-  }
-  .header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .user-badge {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 6px 12px;
-    background: var(--bg-col);
-    border-radius: 100px;
-    font-size: 13px;
-    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px;
+    padding-right: 4px;
+    background: transparent;
+  }
+  .user-badge-info {
+    text-align: right;
+    line-height: 1.3;
+  }
+  .user-badge-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .user-badge-role {
+    font-size: 11px;
+    color: var(--text-muted);
   }
   .user-badge-avatar {
-    width: 24px; height: 24px;
+    width: 40px; height: 40px;
     border-radius: 50%;
     display: grid; place-items: center;
     color: white;
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 600;
+    flex-shrink: 0;
   }
   .admin-pill {
-    background: var(--warning-light);
-    color: #92400e;
-    padding: 2px 6px;
-    border-radius: 4px;
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 100px;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  /* === PAGE === */
+  .page-content {
+    padding: 28px 32px;
+    flex: 1;
+    overflow-y: auto;
+  }
+  .page-title-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 22px;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .page-title {
+    font-family: var(--font-serif);
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  .page-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  /* === FILTER STRIP === */
+  .filter-strip {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .filter-group-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-right: 4px;
+  }
+  .filter-divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    flex-shrink: 0;
   }
 
   /* === BUTTONS === */
@@ -116,26 +327,51 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 8px 14px;
+    padding: 9px 16px;
     border-radius: var(--radius-sm);
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     border: 1px solid transparent;
     transition: all .15s;
     white-space: nowrap;
+    font-family: inherit;
   }
   .btn:hover { transform: translateY(-1px); }
   .btn-primary { background: var(--primary); color: white; }
   .btn-primary:hover { background: var(--primary-dark); }
+  .btn-accent { background: var(--accent); color: white; }
+  .btn-accent:hover { background: #a36418; }
+  .btn-accent-soft {
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: transparent;
+  }
+  .btn-accent-soft:hover { background: #fae8c9; }
+  .btn-success { background: var(--success); color: white; }
+  .btn-success:hover { background: #15803d; }
+  .btn-success-soft {
+    background: var(--success-light);
+    color: #15803d;
+  }
+  .btn-success-soft:hover { background: #bbf7d0; }
   .btn-secondary { background: var(--bg-col); color: var(--text); border-color: var(--border); }
-  .btn-secondary:hover { background: #e1e7ef; }
+  .btn-secondary:hover { background: #e9e4dc; }
   .btn-ghost { background: transparent; color: var(--text-muted); }
   .btn-ghost:hover { background: var(--bg-col); color: var(--text); }
+  .btn-ghost-soft {
+    background: white;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost-soft:hover {
+    background: var(--bg-col);
+    color: var(--text);
+  }
   .btn-danger { background: var(--danger); color: white; }
-  .btn-danger:hover { background: #dc2626; }
-  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  .btn-danger:hover { background: var(--primary-dark); }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
   .btn-icon {
-    width: 32px; height: 32px;
+    width: 34px; height: 34px;
     padding: 0;
     border-radius: var(--radius-sm);
   }
@@ -233,18 +469,16 @@
   .kanban {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    padding: 20px;
-    flex: 1;
-    overflow: auto;
+    gap: 20px;
+    min-height: 400px;
   }
   .kanban-col {
     background: var(--bg-col);
     border-radius: var(--radius-lg);
-    padding: 12px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    min-height: 200px;
+    min-height: 300px;
     transition: background .15s;
   }
   .kanban-col.drag-over {
@@ -318,7 +552,7 @@
   .task-card {
     background: white;
     border-radius: var(--radius);
-    padding: 10px 12px;
+    padding: 16px 18px;
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--border);
     cursor: grab;
@@ -333,8 +567,36 @@
     opacity: 0.5;
     cursor: grabbing;
   }
-  .task-card.col-done { border-left: 3px solid var(--success); }
-  .task-card.col-proses { border-left: 3px solid var(--warning); }
+  .task-card.col-todo { border-left: 4px solid var(--info); }
+  .task-card.col-proses { border-left: 4px solid var(--warning); }
+  .task-card.col-done { border-left: 4px solid var(--success); }
+  .task-card-body { cursor: pointer; }
+  .task-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .task-card-actions .btn {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12.5px;
+  }
+  .task-card-history-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+  }
+  .task-card-history-btn:hover {
+    background: var(--bg-col);
+    color: var(--text);
+  }
   .task-card.task-locked {
     background: #fafbfc;
     cursor: default;
@@ -1067,18 +1329,94 @@
   }
   .empty-page-title { font-weight: 600; font-size: 16px; margin-bottom: 6px; color: var(--text); }
 
+  /* === TIMELINE (Modal Riwayat) === */
+  .timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    padding-bottom: 22px;
+    padding-left: 8px;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-marker {
+    position: absolute;
+    left: -30px;
+    top: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: white;
+    border: 2px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .timeline-marker.created { background: var(--info-light); border-color: var(--info); color: var(--info); }
+  .timeline-marker.proses { background: var(--warning-light); border-color: var(--warning); color: var(--warning); }
+  .timeline-marker.done { background: var(--success-light); border-color: var(--success); color: var(--success); }
+  .timeline-marker.progress { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+  .timeline-marker.todo { background: var(--bg-col); border-color: var(--border-strong); }
+  .timeline-status {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .timeline-meta {
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .timeline-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .timeline-detail {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
   /* === RESPONSIVE === */
   @media (max-width: 900px) {
-    .kanban { grid-template-columns: 1fr; gap: 12px; padding: 12px; }
+    .sidebar {
+      position: fixed;
+      transform: translateX(-100%);
+    }
+    .sidebar.open { transform: translateX(0); }
+    .sidebar-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 80;
+      display: none;
+    }
+    .sidebar-overlay.show { display: block; }
+    .topbar-toggle { display: grid; }
+    .topbar { padding: 14px 18px; }
+    .topbar-welcome-title { font-size: 18px; }
+    .topbar-welcome-sub { display: none; }
+    .user-badge-info { display: none; }
+    .page-content { padding: 18px; }
+    .page-title { font-size: 26px; }
+    .kanban { grid-template-columns: 1fr; gap: 12px; }
     .kanban-col { min-height: 100px; }
-    .header { padding: 10px 12px; gap: 10px; }
-    .header-controls { width: 100%; }
     .modal { max-width: 100%; max-height: 95vh; }
     .setup-card { padding: 24px; }
-  }
-  @media (max-width: 600px) {
-    .header-brand-text { display: none; }
-    .user-badge .user-name { display: none; }
   }
 </style>
 </head>
@@ -1769,67 +2107,139 @@ function renderMain() {
     </button>
   `).join('');
 
-  // Label filter chips
-  const labelFilterHtml = STATE.labels.length > 0 ? `
-    <div class="chip-row" style="gap:4px">
-      ${STATE.labels.map(l => `
+  // Label filter chips (inner only — wrapper provided di header-filter-group)
+  const labelFilterHtml = STATE.labels.length > 0
+    ? STATE.labels.map(l => `
         <button class="label-toggle ${STATE.filterLabelIds.includes(l.id) ? 'active' : ''}"
           data-filter-label="${l.id}" style="color:${l.color}">
           <span class="label-dot" style="background:${l.color}"></span>
           ${escapeHtml(l.name)}
         </button>
-      `).join('')}
-    </div>
-  ` : '';
+      `).join('')
+    : '';
+
+  const currentBoard = STATE.boards.find(b => b.id === STATE.currentBoardId);
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 11) return 'Selamat pagi';
+    if (h < 15) return 'Selamat siang';
+    if (h < 18) return 'Selamat sore';
+    return 'Selamat malam';
+  })();
 
   document.getElementById('app').innerHTML = `
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
     <div class="app-shell">
-      <div class="header">
-        <div class="header-brand">
-          <div class="header-brand-icon">T</div>
-          <div class="header-brand-text">Team Tracker</div>
-        </div>
-
-        <div class="board-switcher">
-          ${boardChips}
-          ${isAdmin ? `<button class="board-chip board-chip-new" id="btn-manage-boards" title="Kelola boards">+ Board</button>` : ''}
-        </div>
-
-        <div class="header-controls">
-          <div class="date-control">
-            <button class="date-nav" id="date-prev" title="Hari sebelumnya">‹</button>
-            <input type="date" id="date-input" class="date-input" value="${STATE.selectedDate}">
-            <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
-            <button class="date-today-btn" id="date-today">Hari ini</button>
+      <!-- SIDEBAR -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-logo">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2h4v6h6v4h-6v6H8v-6H2V8h6z"/></svg>
           </div>
-          <div class="chip-row" id="member-filter-chips">
-            ${allChip}${memberChips}
-          </div>
-          ${labelFilterHtml}
+          <div class="sidebar-title">Team Tracker</div>
         </div>
-
-        <div class="header-right">
-          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-members">👥 Anggota</button>` : ''}
-          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-labels">🏷️ Labels</button>` : ''}
-          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-templates">📋 Template</button>` : ''}
-          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-share-kit">🔗 Bagikan</button>` : ''}
-          <button class="btn btn-secondary btn-sm" id="btn-export">📊 Export</button>
-          <div class="user-badge">
-            <span class="user-badge-avatar" style="background:${colorFor(me.name)}">${escapeHtml(initials(me.name))}</span>
-            <span class="user-name">${escapeHtml(me.name)}</span>
-            ${isAdmin ? '<span class="admin-pill">Admin</span>' : ''}
-          </div>
-          <button class="btn btn-ghost btn-sm" id="btn-logout" title="Ganti user">⎋</button>
+        <nav class="sidebar-nav">
+          <button class="sidebar-nav-item active" data-nav="kanban">
+            <span class="sidebar-nav-icon">📋</span>Kanban Board
+          </button>
+          ${isAdmin ? `
+            <button class="sidebar-nav-item" data-nav="boards">
+              <span class="sidebar-nav-icon">📁</span>Data Proyek
+            </button>
+          ` : ''}
+          ${isAdmin ? `
+            <button class="sidebar-nav-item" data-nav="members">
+              <span class="sidebar-nav-icon">👥</span>Data Pengguna
+            </button>
+          ` : ''}
+          ${isAdmin ? `
+            <div class="sidebar-nav-section">Konfigurasi</div>
+            <button class="sidebar-nav-item" data-nav="labels">
+              <span class="sidebar-nav-icon">🏷️</span>Labels
+            </button>
+            <button class="sidebar-nav-item" data-nav="templates">
+              <span class="sidebar-nav-icon">📋</span>Template
+            </button>
+          ` : ''}
+          <div class="sidebar-nav-section">Tools</div>
+          <button class="sidebar-nav-item" data-nav="export">
+            <span class="sidebar-nav-icon">📊</span>Export Data
+          </button>
+          ${isAdmin ? `
+            <button class="sidebar-nav-item" data-nav="share">
+              <span class="sidebar-nav-icon">🔗</span>Bagikan App
+            </button>
+          ` : ''}
+        </nav>
+        <div class="sidebar-bottom">
+          <button class="sidebar-logout" id="btn-logout">
+            <svg viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px"><path d="M3 4a1 1 0 011-1h8a1 1 0 110 2H5v10h7a1 1 0 110 2H4a1 1 0 01-1-1V4zm12.293 3.293a1 1 0 011.414 0l2 2a1 1 0 010 1.414l-2 2a1 1 0 01-1.414-1.414L15.586 11H9a1 1 0 110-2h6.586l-.293-.293a1 1 0 010-1.414z"/></svg>
+            Keluar
+          </button>
         </div>
-      </div>
+      </aside>
 
-      <div id="kanban-root"></div>
+      <!-- MAIN -->
+      <main class="main-content">
+        <header class="topbar">
+          <button class="topbar-toggle" id="topbar-toggle">☰</button>
+          <div class="topbar-welcome">
+            <div class="topbar-welcome-title">${greeting}, ${escapeHtml(me.name)}! 👋</div>
+            <div class="topbar-welcome-sub">Pantau dan kelola tugas tim Anda hari ini.</div>
+          </div>
+          <div class="topbar-right">
+            <div class="user-badge">
+              <div class="user-badge-info">
+                <div class="user-badge-name">${escapeHtml(me.name)}</div>
+                <div class="user-badge-role">${isAdmin ? 'Admin' : 'Member'}</div>
+              </div>
+              <span class="user-badge-avatar" style="background:${colorFor(me.name)}">${escapeHtml(initials(me.name))}</span>
+            </div>
+          </div>
+        </header>
 
-      <button class="btn btn-primary"
-        style="position:fixed;bottom:24px;right:24px;border-radius:100px;padding:14px 22px;box-shadow:var(--shadow-lg);font-size:14px;font-weight:600"
-        id="btn-new-task">
-        + Tugas Baru
-      </button>
+        <div class="page-content">
+          <div class="page-title-row">
+            <div>
+              <h1 class="page-title">Kanban Board</h1>
+              ${currentBoard ? `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">Board aktif: <strong style="color:var(--text)">${escapeHtml(currentBoard.name)}</strong></div>` : ''}
+            </div>
+            <div class="page-toolbar">
+              <div class="board-switcher">
+                ${boardChips}
+                ${isAdmin ? `<button class="board-chip board-chip-new" data-nav="boards" title="Kelola boards">+ Board</button>` : ''}
+              </div>
+              <button class="btn btn-primary" id="btn-new-task">+ Tugas Baru</button>
+            </div>
+          </div>
+
+          <div class="filter-strip">
+            <div class="filter-group">
+              <span class="filter-group-label">Tanggal</span>
+              <div class="date-control">
+                <button class="date-nav" id="date-prev" title="Hari sebelumnya">‹</button>
+                <input type="date" id="date-input" class="date-input" value="${STATE.selectedDate}">
+                <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
+                <button class="date-today-btn" id="date-today">Hari ini</button>
+              </div>
+            </div>
+            <div class="filter-divider"></div>
+            <div class="filter-group">
+              <span class="filter-group-label">Anggota</span>
+              <div class="chip-row" id="member-filter-chips">${allChip}${memberChips}</div>
+            </div>
+            ${STATE.labels.length > 0 ? `
+              <div class="filter-divider"></div>
+              <div class="filter-group">
+                <span class="filter-group-label">Label</span>
+                ${labelFilterHtml}
+              </div>
+            ` : ''}
+          </div>
+
+          <div id="kanban-root"></div>
+        </div>
+      </main>
     </div>
   `;
 
@@ -1865,17 +2275,43 @@ function renderMain() {
   });
 
   document.getElementById('btn-new-task').addEventListener('click', () => openTaskModal());
-  if (isAdmin) document.getElementById('btn-manage-members').addEventListener('click', openMembersModal);
-  if (isAdmin) document.getElementById('btn-manage-boards').addEventListener('click', openBoardsModal);
-  if (isAdmin) document.getElementById('btn-manage-labels').addEventListener('click', openLabelsModal);
-  if (isAdmin) document.getElementById('btn-manage-templates').addEventListener('click', openTemplatesModal);
-  if (isAdmin) document.getElementById('btn-share-kit').addEventListener('click', openShareKitModal);
-  document.getElementById('btn-export').addEventListener('click', openExportModal);
+
+  // Sidebar navigation
+  document.querySelectorAll('[data-nav]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeSidebarMobile();
+      switch (btn.dataset.nav) {
+        case 'kanban': /* already showing */ break;
+        case 'boards': openBoardsModal(); break;
+        case 'members': openMembersModal(); break;
+        case 'labels': openLabelsModal(); break;
+        case 'templates': openTemplatesModal(); break;
+        case 'export': openExportModal(); break;
+        case 'share': openShareKitModal(); break;
+      }
+    });
+  });
+
+  // Logout
   document.getElementById('btn-logout').addEventListener('click', () => {
     localStorage.removeItem(LS_KEYS.CURRENT_MEMBER);
     STATE.currentMember = null;
     renderMemberPicker();
   });
+
+  // Mobile sidebar toggle
+  const toggle = document.getElementById('topbar-toggle');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (toggle) toggle.addEventListener('click', () => {
+    sidebar?.classList.toggle('open');
+    overlay?.classList.toggle('show');
+  });
+  if (overlay) overlay.addEventListener('click', closeSidebarMobile);
+  function closeSidebarMobile() {
+    sidebar?.classList.remove('open');
+    overlay?.classList.remove('show');
+  }
 
   renderKanban();
 }
@@ -1923,11 +2359,33 @@ function renderKanban() {
 
   root.innerHTML = `<div class="kanban">${colsHtml}</div>`;
 
-  // Bind card click
+  // Bind card click (only on body, not on action buttons)
   root.querySelectorAll('[data-task-id]').forEach(el => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('[data-stop]')) return;
-      openTaskModal(el.dataset.taskId);
+    const body = el.querySelector('[data-card-body]');
+    if (body) {
+      body.addEventListener('click', (e) => {
+        if (e.target.closest('[data-stop]')) return;
+        openTaskModal(el.dataset.taskId);
+      });
+    }
+  });
+
+  // Quick action buttons (Kerjakan / Batal / Selesai / Batal Selesai)
+  root.querySelectorAll('[data-quick-action]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const [newStatus, taskId] = btn.dataset.quickAction.split(':');
+      const task = STATE.tasks.find(t => t.id === taskId);
+      if (!task || !canEditTask(task)) return;
+      await updateTaskStatus(taskId, newStatus);
+    });
+  });
+
+  // History button → modal Riwayat Pengerjaan
+  root.querySelectorAll('[data-history]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openHistoryModal(btn.dataset.history);
     });
   });
 
@@ -1983,6 +2441,7 @@ function renderTaskCard(t) {
   const locked = !canEditTask(t);
   const progress = Number(t.progress) || 0;
   const fillClass = progressFillClass(progress);
+  const status = t.status || 'todo';
 
   // Labels
   const taskLabels = (t.labelIds || [])
@@ -2003,26 +2462,56 @@ function renderTaskCard(t) {
     ? `<span title="${checklistInfo.done} dari ${checklistInfo.total} checklist selesai">☑️ ${checklistInfo.done}/${checklistInfo.total}</span>`
     : '';
 
+  // Action buttons (conditional by status & permission)
+  let actionsHtml = '';
+  if (!locked) {
+    if (status === 'todo') {
+      actionsHtml = `
+        <button class="btn btn-accent" data-stop data-quick-action="proses:${t.id}">
+          Kerjakan →
+        </button>
+      `;
+    } else if (status === 'proses') {
+      actionsHtml = `
+        <button class="btn btn-ghost-soft" data-stop data-quick-action="todo:${t.id}">
+          ↺ Batal
+        </button>
+        <button class="btn btn-success" data-stop data-quick-action="done:${t.id}">
+          ✓ Selesai
+        </button>
+      `;
+    } else if (status === 'done') {
+      actionsHtml = `
+        <button class="btn btn-ghost-soft" data-stop data-quick-action="proses:${t.id}">
+          ↺ Batal Selesai
+        </button>
+      `;
+    }
+  }
+
   return `
-    <div class="task-card col-${t.status || 'todo'} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
-      ${labelsHtml}
-      <div class="task-card-title">${escapeHtml(t.title)}</div>
-      ${desc}
-      <div class="task-card-progress">
-        <div class="task-card-progress-track">
-          <div class="task-card-progress-fill ${fillClass}" style="width:${progress}%"></div>
+    <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
+      <div class="task-card-body" data-card-body>
+        ${labelsHtml}
+        <div class="task-card-title">${escapeHtml(t.title)}</div>
+        ${desc}
+        <div class="task-card-progress">
+          <div class="task-card-progress-track">
+            <div class="task-card-progress-fill ${fillClass}" style="width:${progress}%"></div>
+          </div>
+          <span class="task-card-progress-label">${progress}%</span>
         </div>
-        <span class="task-card-progress-label">${progress}%</span>
+        <div class="task-card-meta">
+          <span class="task-card-assignee">
+            ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
+          </span>
+          ${dueBadge}
+          ${checklistBadge}
+          ${commentCount ? `<span class="task-card-comments-badge">💬 ${commentCount}</span>` : ''}
+          <button class="task-card-history-btn" data-stop data-history="${t.id}" title="Riwayat Pengerjaan">🕐</button>
+        </div>
       </div>
-      <div class="task-card-meta">
-        <span class="task-card-assignee">
-          ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
-        </span>
-        ${dueBadge}
-        ${checklistBadge}
-        ${commentCount ? `<span class="task-card-comments-badge">💬 ${commentCount}</span>` : ''}
-        <span style="margin-left:auto">${timeAgo(t.updatedAt || t.createdAt)}</span>
-      </div>
+      ${actionsHtml ? `<div class="task-card-actions">${actionsHtml}</div>` : ''}
     </div>
   `;
 }
@@ -2802,6 +3291,110 @@ function openMembersModal() {
       }
     });
   });
+}
+
+/* =============================================================
+   RIWAYAT PENGERJAAN MODAL (timeline activity)
+   ============================================================= */
+function openHistoryModal(taskId) {
+  const task = STATE.tasks.find(t => t.id === taskId);
+  if (!task) return;
+
+  // Build timeline events
+  const events = [];
+  const activity = task.activity || [];
+
+  // Selalu include "created" sebagai event pertama kalau ada
+  if (activity.length > 0) {
+    activity.forEach(a => {
+      let label, markerClass = 'todo', icon = '·';
+      switch (a.type) {
+        case 'created':
+          label = 'To do'; markerClass = 'created'; icon = '+';
+          break;
+        case 'status_changed':
+          label = (a.to || '').toUpperCase().charAt(0) + (a.to || '').slice(1);
+          markerClass = a.to === 'done' ? 'done' : (a.to === 'proses' ? 'proses' : 'todo');
+          icon = a.to === 'done' ? '✓' : (a.to === 'proses' ? '◐' : '○');
+          break;
+        case 'progress_changed':
+          label = `Progress: ${a.to}%`;
+          markerClass = 'progress';
+          icon = '%';
+          break;
+        case 'assignee_changed':
+          label = `Pelaksana → ${a.to || '?'}`;
+          markerClass = 'todo';
+          icon = '👤';
+          break;
+        default:
+          label = a.type;
+      }
+      events.push({ ...a, label, markerClass, icon });
+    });
+  } else {
+    // Tidak ada activity tracker — fallback ke createdAt + completedAt
+    if (task.createdAt) {
+      events.push({
+        type: 'created', label: 'Dibuat',
+        markerClass: 'created', icon: '+',
+        byName: task.createdByName, at: task.createdAt,
+      });
+    }
+    if (task.completedAt) {
+      events.push({
+        type: 'completed', label: 'Selesai',
+        markerClass: 'done', icon: '✓',
+        byName: task.assigneeName, at: task.completedAt,
+      });
+    }
+  }
+
+  // Format date/time
+  function fmtDateTime(at) {
+    if (!at) return '';
+    const d = typeof at === 'string' ? new Date(at) : (at.toDate ? at.toDate() : new Date(at));
+    const dd = String(d.getDate()).padStart(2, '0');
+    const months = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    const mm = months[d.getMonth()];
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return { date: `${dd} ${mm} ${yyyy}`, time: `${hh}.${min}` };
+  }
+
+  const itemsHtml = events.map(ev => {
+    const dt = fmtDateTime(ev.at);
+    return `
+      <div class="timeline-item">
+        <div class="timeline-marker ${ev.markerClass}">${ev.icon}</div>
+        <div class="timeline-status">${escapeHtml(ev.label)}</div>
+        ${ev.byName ? `<div class="timeline-detail">oleh <strong>${escapeHtml(ev.byName)}</strong></div>` : ''}
+        <div class="timeline-meta">
+          <span class="timeline-meta-item">📅 ${dt.date || ''}</span>
+          <span class="timeline-meta-item">🕐 ${dt.time || ''}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">🕐 Riwayat Pengerjaan</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:18px">
+        Task: <strong style="color:var(--text)">${escapeHtml(task.title)}</strong>
+      </div>
+      ${events.length > 0
+        ? `<div class="timeline">${itemsHtml}</div>`
+        : `<div style="color:var(--text-light);text-align:center;padding:24px;font-size:13px">Belum ada riwayat aktivitas</div>`}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close-modal>Tutup</button>
+    </div>
+  `);
 }
 
 /* =============================================================
