@@ -672,6 +672,136 @@
     background: var(--primary-light);
   }
 
+  /* === CALENDAR === */
+  .calendar-wrap {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .calendar-month-label {
+    font-family: var(--font-serif);
+    font-size: 26px;
+    font-weight: 400;
+  }
+  .calendar-nav { display: flex; gap: 6px; align-items: center; }
+  .calendar-nav-btn {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-col);
+    font-size: 14px;
+    color: var(--text);
+    transition: all .15s;
+  }
+  .calendar-nav-btn:hover { background: var(--border); }
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+  }
+  .calendar-dow {
+    padding: 10px 14px;
+    background: var(--bg-col);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    text-align: center;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .calendar-dow:last-child { border-right: none; }
+  .calendar-day {
+    aspect-ratio: 1.2;
+    min-height: 110px;
+    padding: 8px 10px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    transition: background .12s;
+    position: relative;
+  }
+  .calendar-day:nth-child(7n) { border-right: none; }
+  .calendar-day:hover { background: var(--bg-col); }
+  .calendar-day.outside {
+    background: #fafafa;
+    color: var(--text-light);
+    cursor: default;
+  }
+  .calendar-day.outside:hover { background: #fafafa; }
+  .calendar-day.today .calendar-day-num {
+    background: var(--primary);
+    color: white;
+    border-radius: 50%;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    font-weight: 700;
+  }
+  .calendar-day-num {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .calendar-day.outside .calendar-day-num { color: var(--text-light); }
+  .calendar-day-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: auto;
+  }
+  .calendar-day-mini-bar {
+    height: 4px;
+    border-radius: 100px;
+    background: var(--bg-col);
+    overflow: hidden;
+    margin: 6px 0 4px;
+  }
+  .calendar-day-mini-bar-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: 100px;
+  }
+  .calendar-day-completion {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .calendar-day.complete .calendar-day-completion { color: var(--success); }
+  .calendar-day.partial .calendar-day-completion { color: var(--warning); }
+  .calendar-day.empty .calendar-day-completion { color: var(--text-light); }
+  .calendar-day-counts {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+  .calendar-day-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .calendar-day-count.todo { background: var(--info-light); color: var(--info); }
+  .calendar-day-count.proses { background: var(--warning-light); color: #92400e; }
+  .calendar-day-count.done { background: var(--success-light); color: #15803d; }
+
   /* === RECAP TABLE === */
   .recap-table-wrap {
     background: white;
@@ -1650,7 +1780,8 @@ const STATE = {
   filterMemberId: null,  // null = semua
   filterLabelIds: [],    // filter task by label (multi)
   filterCategoryId: null, // null = semua kategori
-  currentView: 'kanban', // 'kanban' | 'recap'
+  currentView: 'kanban', // 'kanban' | 'recap' | 'calendar'
+  calendarMonth: null,   // 'YYYY-MM' (null = bulan ini)
   recapFilters: {
     from: '',         // range tanggal dari
     to: '',           // range tanggal sampai
@@ -1714,7 +1845,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2037,7 +2168,9 @@ function subscribeLabels() {
       return;
     }
     firstLoad = false;
-    renderKanban();
+    // FIX BUG: Re-render FULL UI — labels muncul di header filter strip & recap filter,
+    // bukan cuma di kanban card. renderKanban() saja tidak cukup.
+    if (STATE.currentMember && STATE.boards.length > 0) renderMain();
   }, (err) => console.error('Labels listener error', err));
 }
 
@@ -2048,6 +2181,11 @@ function subscribeTemplates() {
   STATE.unsubTemplates = onSnapshot(tplRef, (snap) => {
     STATE.templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+    // FIX BUG: Re-render kanban view supaya "Pakai Template" dropdown di task modal terbaru
+    // (kalau view=recap/calendar, gak perlu re-render — task modal akan re-read STATE.templates saat dibuka)
+    if (STATE.currentMember && STATE.boards.length > 0 && STATE.currentView === 'kanban') {
+      renderMain();
+    }
   }, (err) => console.error('Templates listener error', err));
 }
 
@@ -2082,7 +2220,8 @@ function subscribeTasks() {
   const tasksRef = collection(STATE.db, 'tasks');
   // Subscribe semua task (limit 1000) — supaya bisa rollover task lama belum done & untuk view Rekap
   const q = query(tasksRef, orderBy('createdAt', 'desc'), limit(1000));
-  STATE.unsubTasks = onSnapshot(q, (snap) => {
+  let firstSnap = true;
+  STATE.unsubTasks = onSnapshot(q, async (snap) => {
     STATE.tasks = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => {
@@ -2092,10 +2231,102 @@ function subscribeTasks() {
       });
     renderKanban();
     renderRecapTable();
+    renderCalendarGrid();
+
+    // Setelah snapshot pertama, trigger auto-generate recurring tasks
+    if (firstSnap) {
+      firstSnap = false;
+      try { await ensureRecurringTasksForToday(); } catch (err) { console.error('Auto-generate gagal', err); }
+    }
   }, (err) => {
     console.error('Tasks listener error', err);
     toast('Gagal load tugas: ' + err.message, 'error');
   });
+}
+
+// === RECURRING TASKS GENERATOR ===
+// Cek setiap template aktif, generate task untuk hari ini kalau frekuensi match & belum ada.
+// Anti-duplicate: pakai deterministic doc ID + getDoc existence check sebelum setDoc.
+async function ensureRecurringTasksForToday() {
+  if (!STATE.currentMember || !STATE.boards.length || !STATE.templates.length) return;
+  const me = STATE.currentMember;
+  const today = todayStr();
+  const todayDt = new Date(today + 'T00:00:00');
+  const dow = todayDt.getDay();              // 0=Sun ... 6=Sat
+  const dom = todayDt.getDate();             // 1..31
+  const lastDom = new Date(todayDt.getFullYear(), todayDt.getMonth() + 1, 0).getDate();
+
+  for (const tpl of STATE.templates) {
+    const freq = tpl.frequency || 'manual';
+    if (freq === 'manual') continue;
+    if (tpl.active === false) continue;
+    if (!Array.isArray(tpl.items) || tpl.items.length === 0) continue;
+
+    let shouldGenerate = false;
+    if (freq === 'daily') shouldGenerate = true;
+    else if (freq === 'weekly' && Number(tpl.dayOfWeek) === dow) shouldGenerate = true;
+    else if (freq === 'monthly') {
+      const target = tpl.dayOfMonth === 'last' ? lastDom : Number(tpl.dayOfMonth);
+      if (target === dom) shouldGenerate = true;
+    }
+    if (!shouldGenerate) continue;
+
+    const assigneeId = tpl.defaultAssigneeId || me.id;
+    const assignee = STATE.members.find(m => m.id === assigneeId);
+    if (!assignee) continue;
+    const category = tpl.defaultCategoryId || 'b2c';
+
+    // Generate task per item dengan DETERMINISTIC doc ID (anti-duplicate even race)
+    for (let idx = 0; idx < tpl.items.length; idx++) {
+      const item = tpl.items[idx];
+      const itemId = item.id || `idx${idx}`;
+      const docId = `tpl_${tpl.id}_${today}_${itemId}`;
+      const taskRef = doc(STATE.db, 'tasks', docId);
+
+      try {
+        // Cek existence — kalau sudah ada, skip (idempotent)
+        const existsSnap = await getDoc(taskRef);
+        if (existsSnap.exists()) continue;
+
+        const checklists = Array.isArray(item.checklist) && item.checklist.length > 0
+          ? [{
+              id: uid(),
+              title: 'Checklist',
+              items: item.checklist.map(t => ({ id: uid(), text: t, done: false })),
+            }]
+          : [];
+
+        await setDoc(taskRef, {
+          title: item.title || tpl.name,
+          description: item.description || '',
+          status: 'todo',
+          progress: 0,
+          date: today,
+          dueDate: null,
+          assigneeId, assigneeName: assignee.name,
+          boardId: STATE.currentBoardId,
+          category,
+          labelIds: [],
+          checklists,
+          fromTemplateId: tpl.id,
+          fromTemplateName: tpl.name,
+          fromTemplateDate: today,
+          createdById: me.id, createdByName: me.name,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          completedAt: null,
+          comments: [],
+          activity: [{
+            id: uid(), type: 'created',
+            byId: me.id, byName: `Template "${tpl.name}" (auto)`,
+            at: new Date().toISOString(),
+          }],
+        });
+      } catch (err) {
+        console.error('Gagal generate task dari template', tpl.name, err);
+      }
+    }
+  }
 }
 
 /* =============================================================
@@ -2658,6 +2889,213 @@ function renderRecapTable() {
   });
 }
 
+function getActiveCalendarMonth() {
+  if (STATE.calendarMonth) return STATE.calendarMonth;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function shiftCalendarMonth(delta) {
+  const cur = getActiveCalendarMonth();
+  const [y, m] = cur.split('-').map(Number);
+  const dt = new Date(y, m - 1 + delta, 1);
+  STATE.calendarMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function renderCalendarPageHtml() {
+  const month = getActiveCalendarMonth();
+  const [y, m] = month.split('-').map(Number);
+  const monthsId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const monthLabel = `${monthsId[m - 1]} ${y}`;
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">Kalender Tugas</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Lihat completion harian — klik tanggal untuk detail tugas</div>
+      </div>
+    </div>
+
+    <div class="calendar-wrap">
+      <div class="calendar-header">
+        <div class="calendar-month-label" id="cal-month-label">${monthLabel}</div>
+        <div class="calendar-nav">
+          <button class="calendar-nav-btn" id="cal-prev" title="Bulan lalu">‹</button>
+          <button class="btn btn-secondary btn-sm" id="cal-today">Hari ini</button>
+          <button class="calendar-nav-btn" id="cal-next" title="Bulan depan">›</button>
+        </div>
+      </div>
+      <div id="calendar-grid-root"></div>
+    </div>
+  `;
+}
+
+function getTasksForDate(dateStr) {
+  return STATE.tasks.filter(t =>
+    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+    && t.date === dateStr
+  );
+}
+
+function renderCalendarGrid() {
+  const root = document.getElementById('calendar-grid-root');
+  if (!root) return;
+  const month = getActiveCalendarMonth();
+  const [y, m] = month.split('-').map(Number);
+  const firstDay = new Date(y, m - 1, 1);
+  const lastDay = new Date(y, m, 0);
+  const firstDow = firstDay.getDay(); // 0=Sun..6=Sat
+  const daysInMonth = lastDay.getDate();
+  const today = todayStr();
+
+  // Compute prev month tail
+  const prevLastDate = new Date(y, m - 1, 0).getDate();
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) {
+    const d = prevLastDate - i;
+    const dt = new Date(y, m - 2, d);
+    cells.push({ outside: true, dateStr: `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`, day: d });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ outside: false, dateStr: `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`, day: d });
+  }
+  // Pad ke 42 cells (6 minggu max)
+  let nextDay = 1;
+  while (cells.length < 42) {
+    const dt = new Date(y, m, nextDay);
+    cells.push({ outside: true, dateStr: `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(nextDay).padStart(2,'0')}`, day: nextDay });
+    nextDay++;
+  }
+
+  const dows = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const dowHtml = dows.map(d => `<div class="calendar-dow">${d}</div>`).join('');
+
+  const cellsHtml = cells.map(c => {
+    const dayTasks = getTasksForDate(c.dateStr);
+    const todoCount = dayTasks.filter(t => t.status === 'todo' || !t.status).length;
+    const prosesCount = dayTasks.filter(t => t.status === 'proses').length;
+    const doneCount = dayTasks.filter(t => t.status === 'done').length;
+    const total = dayTasks.length;
+    const pct = total > 0 ? Math.round(doneCount * 100 / total) : 0;
+    const isToday = c.dateStr === today;
+    const completionClass = total === 0 ? 'empty' : (pct === 100 ? 'complete' : 'partial');
+
+    return `
+      <div class="calendar-day ${c.outside ? 'outside' : ''} ${isToday ? 'today' : ''} ${completionClass}" data-cal-day="${c.dateStr}">
+        <div><span class="calendar-day-num">${c.day}</span></div>
+        ${total === 0 ? '' : `
+          <div class="calendar-day-counts">
+            ${todoCount ? `<span class="calendar-day-count todo">○ ${todoCount}</span>` : ''}
+            ${prosesCount ? `<span class="calendar-day-count proses">◐ ${prosesCount}</span>` : ''}
+            ${doneCount ? `<span class="calendar-day-count done">✓ ${doneCount}</span>` : ''}
+          </div>
+          <div class="calendar-day-mini-bar">
+            <div class="calendar-day-mini-bar-fill" style="width:${pct}%;background:${pct === 100 ? 'var(--success)' : (pct > 0 ? 'var(--warning)' : 'var(--text-light)')}"></div>
+          </div>
+          <div class="calendar-day-completion">${pct}% · ${total} tugas</div>
+        `}
+      </div>
+    `;
+  }).join('');
+
+  root.innerHTML = `<div class="calendar-grid">${dowHtml}${cellsHtml}</div>`;
+
+  // Bind clicks
+  root.querySelectorAll('[data-cal-day]').forEach(cell => {
+    cell.addEventListener('click', () => openDayDetailModal(cell.dataset.calDay));
+  });
+}
+
+function bindCalendarNav() {
+  const prev = document.getElementById('cal-prev');
+  const next = document.getElementById('cal-next');
+  const today = document.getElementById('cal-today');
+  if (prev) prev.addEventListener('click', () => { shiftCalendarMonth(-1); renderMain(); });
+  if (next) next.addEventListener('click', () => { shiftCalendarMonth(1); renderMain(); });
+  if (today) today.addEventListener('click', () => { STATE.calendarMonth = null; renderMain(); });
+}
+
+function openDayDetailModal(dateStr) {
+  const dayTasks = getTasksForDate(dateStr);
+  const todoTasks = dayTasks.filter(t => t.status === 'todo' || !t.status);
+  const prosesTasks = dayTasks.filter(t => t.status === 'proses');
+  const doneTasks = dayTasks.filter(t => t.status === 'done');
+  const total = dayTasks.length;
+  const pct = total > 0 ? Math.round(doneTasks.length * 100 / total) : 0;
+
+  const renderTaskRow = (t) => {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    return `
+      <div data-day-task="${t.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg-col);margin-bottom:6px;cursor:pointer">
+        <span class="status-pill ${t.status || 'todo'}" style="min-width:62px;text-align:center">${(t.status || 'todo').toUpperCase()}</span>
+        ${cat ? `<span class="category-badge" style="color:${cat.color};margin:0;font-size:9px">${escapeHtml(cat.short)}</span>` : ''}
+        <span style="flex:1;font-weight:500">${escapeHtml(t.title || '')}</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)">
+          ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
+        </span>
+        <span class="mini-progress" style="width:60px"><span class="mini-progress-fill" style="width:${t.progress || 0}%;background:${t.progress === 100 ? 'var(--success)' : (t.progress > 0 ? 'var(--warning)' : 'var(--text-light)')}"></span></span>
+        <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;min-width:32px;text-align:right">${t.progress || 0}%</span>
+      </div>
+    `;
+  };
+
+  const [yy, mm, dd] = dateStr.split('-');
+  const monthsId = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const dateLabelStr = `${parseInt(dd)} ${monthsId[parseInt(mm)-1]} ${yy}`;
+
+  showModal(`
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;flex:1">
+        <div class="modal-title">📅 ${dateLabelStr}</div>
+        ${total > 0 ? `
+          <span style="padding:4px 12px;border-radius:100px;background:${pct === 100 ? 'var(--success-light)' : (pct > 0 ? 'var(--warning-light)' : 'var(--bg-col)')};color:${pct === 100 ? '#15803d' : (pct > 0 ? '#92400e' : 'var(--text-muted)')};font-size:12px;font-weight:700;font-family:var(--font-mono)">
+            ${pct}% selesai
+          </span>
+        ` : ''}
+      </div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      ${total === 0 ? `
+        <div style="text-align:center;padding:40px 20px;color:var(--text-light)">
+          📭 Tidak ada tugas di tanggal ini
+        </div>
+      ` : `
+        <div class="recap-summary" style="margin-bottom:18px">
+          <div class="recap-summary-card">
+            <div class="recap-summary-label">Total</div>
+            <div class="recap-summary-value">${total}</div>
+          </div>
+          <div class="recap-summary-card">
+            <div class="recap-summary-label">Selesai</div>
+            <div class="recap-summary-value" style="color:var(--success)">${doneTasks.length}</div>
+          </div>
+          <div class="recap-summary-card">
+            <div class="recap-summary-label">Proses</div>
+            <div class="recap-summary-value" style="color:var(--warning)">${prosesTasks.length}</div>
+          </div>
+          <div class="recap-summary-card">
+            <div class="recap-summary-label">Belum</div>
+            <div class="recap-summary-value" style="color:var(--info)">${todoTasks.length}</div>
+          </div>
+        </div>
+        ${todoTasks.length > 0 ? `<h4 class="comments-title">○ TODO (${todoTasks.length})</h4>${todoTasks.map(renderTaskRow).join('')}` : ''}
+        ${prosesTasks.length > 0 ? `<h4 class="comments-title" style="margin-top:14px">◐ PROSES (${prosesTasks.length})</h4>${prosesTasks.map(renderTaskRow).join('')}` : ''}
+        ${doneTasks.length > 0 ? `<h4 class="comments-title" style="margin-top:14px">✓ DONE (${doneTasks.length})</h4>${doneTasks.map(renderTaskRow).join('')}` : ''}
+      `}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
+
+  document.querySelectorAll('[data-day-task]').forEach(row => {
+    row.addEventListener('click', () => {
+      closeModal();
+      setTimeout(() => openTaskModal(row.dataset.dayTask), 100);
+    });
+  });
+}
+
 function renderMain() {
   const me = STATE.currentMember;
   const isAdmin = me?.role === 'admin';
@@ -2717,6 +3155,9 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'recap' ? 'active' : ''}" data-nav="recap">
             <span class="sidebar-nav-icon">📊</span>Rekap Tugas
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'calendar' ? 'active' : ''}" data-nav="calendar">
+            <span class="sidebar-nav-icon">📅</span>Kalender Tugas
+          </button>
           ${isAdmin ? `
             <button class="sidebar-nav-item" data-nav="members">
               <span class="sidebar-nav-icon">👥</span>Data Pengguna
@@ -2771,7 +3212,9 @@ function renderMain() {
         <div class="page-content">
           ${STATE.currentView === 'recap'
             ? renderRecapPageHtml()
-            : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)}
+            : (STATE.currentView === 'calendar'
+              ? renderCalendarPageHtml()
+              : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))}
         </div>
       </main>
     </div>
@@ -2829,7 +3272,7 @@ function renderMain() {
       closeSidebarMobile();
       const target = btn.dataset.nav;
       // View switches
-      if (target === 'kanban' || target === 'recap') {
+      if (target === 'kanban' || target === 'recap' || target === 'calendar') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -2852,6 +3295,11 @@ function renderMain() {
   if (STATE.currentView === 'recap') {
     bindRecapFilters();
     renderRecapTable();
+  }
+  // Calendar view bindings
+  if (STATE.currentView === 'calendar') {
+    bindCalendarNav();
+    renderCalendarGrid();
   }
 
   // Logout
@@ -4253,20 +4701,37 @@ function openTemplatesModal() {
   const board = STATE.boards.find(b => b.id === STATE.currentBoardId);
   if (!board) return;
 
-  const list = STATE.templates.map(t => `
-    <div class="member-row">
-      <div class="member-info">
-        <div class="member-name">${escapeHtml(t.name)}</div>
-        <div class="member-meta">
-          ${t.title ? `Judul default: ${escapeHtml(t.title)} · ` : ''}${(t.checklists || []).length} checklist
+  const freqLabel = {
+    manual: { txt: 'Manual', color: 'var(--text-muted)' },
+    daily: { txt: '🗓️ Harian', color: '#dc2626' },
+    weekly: { txt: '📆 Mingguan', color: '#2563eb' },
+    monthly: { txt: '📅 Bulanan', color: '#c87f1f' },
+  };
+  const list = STATE.templates.map(t => {
+    const freq = t.frequency || 'manual';
+    const fl = freqLabel[freq] || freqLabel.manual;
+    const itemCount = (t.items || []).length || (t.title ? 1 : 0);
+    const assignee = STATE.members.find(m => m.id === t.defaultAssigneeId);
+    const isInactive = t.active === false;
+    return `
+      <div class="member-row" style="${isInactive ? 'opacity:0.6' : ''}">
+        <div class="member-info">
+          <div class="member-name">
+            ${escapeHtml(t.name)}
+            <span style="font-size:11px;padding:2px 8px;border-radius:100px;background:var(--bg-col);color:${fl.color};font-weight:700;margin-left:6px">${fl.txt}</span>
+            ${isInactive ? '<span style="font-size:11px;padding:2px 8px;border-radius:100px;background:var(--bg-col);color:var(--text-light);margin-left:4px">Nonaktif</span>' : ''}
+          </div>
+          <div class="member-meta">
+            ${itemCount} item tugas${assignee ? ` · default ke ${escapeHtml(assignee.name)}` : ''}
+          </div>
+        </div>
+        <div class="member-actions">
+          <button class="btn btn-secondary btn-sm" data-edit-tpl="${t.id}">Edit</button>
+          <button class="btn btn-danger btn-sm" data-del-tpl="${t.id}">Hapus</button>
         </div>
       </div>
-      <div class="member-actions">
-        <button class="btn btn-secondary btn-sm" data-edit-tpl="${t.id}">Edit</button>
-        <button class="btn btn-danger btn-sm" data-del-tpl="${t.id}">Hapus</button>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   showModal(`
     <div class="modal-header">
@@ -4310,6 +4775,45 @@ function openTemplateEditor(tplId) {
   const tpl = tplId ? STATE.templates.find(t => t.id === tplId) : null;
   const isEdit = !!tpl;
 
+  // Normalize items — kalau template lama pakai title/description/checklists single, convert ke items[0]
+  let initialItems = tpl?.items;
+  if (!initialItems || !Array.isArray(initialItems) || initialItems.length === 0) {
+    // backward compat
+    if (tpl && (tpl.title || (tpl.checklists?.length || 0) > 0)) {
+      initialItems = [{
+        id: uid(),
+        title: tpl.title || tpl.name || '',
+        description: tpl.description || '',
+        checklist: (tpl.checklists || []).join('\n'),
+      }];
+    } else {
+      initialItems = [{ id: uid(), title: '', description: '', checklist: '' }];
+    }
+  } else {
+    // Convert existing items checklist-array to text for editing
+    initialItems = initialItems.map(i => ({
+      id: i.id || uid(),
+      title: i.title || '',
+      description: i.description || '',
+      checklist: Array.isArray(i.checklist) ? i.checklist.join('\n') : (i.checklist || ''),
+    }));
+  }
+
+  const freq = tpl?.frequency || 'manual';
+  const dayOfWeek = tpl?.dayOfWeek ?? 1; // default Senin
+  const dayOfMonth = tpl?.dayOfMonth ?? 1;
+  const defaultAssigneeId = tpl?.defaultAssigneeId || '';
+  const defaultCategoryId = tpl?.defaultCategoryId || '';
+  const isActive = tpl?.active !== false;
+
+  const memberOpts = `<option value="">— Tidak di-set —</option>` + STATE.members.map(m =>
+    `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}</option>`
+  ).join('');
+
+  const catOpts = `<option value="">— Tidak di-set —</option>` + CATEGORIES.map(c =>
+    `<option value="${c.id}" ${c.id === defaultCategoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+  ).join('');
+
   showModal(`
     <div class="modal-header">
       <div class="modal-title">${isEdit ? 'Edit' : 'Bikin'} Template</div>
@@ -4317,37 +4821,173 @@ function openTemplateEditor(tplId) {
     </div>
     <div class="modal-body">
       <div class="form-group">
-        <label class="label">Nama Template (untuk pilihan)</label>
-        <input id="tpl-name" class="input" placeholder="Mis: Laporan Harian, Restock GrabMart" value="${escapeHtml(tpl?.name || '')}">
+        <label class="label">Nama Template</label>
+        <input id="tpl-name" class="input" placeholder="Mis: Tugas Harian Prayoga, Restock Mingguan" value="${escapeHtml(tpl?.name || '')}">
       </div>
+
       <div class="form-group">
-        <label class="label">Judul Task Default (opsional)</label>
-        <input id="tpl-title" class="input" placeholder="Akan muncul sebagai judul task waktu pakai template ini" value="${escapeHtml(tpl?.title || '')}">
+        <label class="label">Frekuensi Auto-Generate</label>
+        <div class="category-select">
+          <button type="button" class="category-option ${freq === 'manual' ? 'active' : ''}" data-freq="manual" style="color:var(--text-muted)">
+            <div class="category-option-name">Manual</div>
+            <div class="category-option-desc">Pakai saat buat task baru aja</div>
+          </button>
+          <button type="button" class="category-option ${freq === 'daily' ? 'active' : ''}" data-freq="daily" style="color:#dc2626">
+            <div class="category-option-name">Harian</div>
+            <div class="category-option-desc">Auto setiap hari</div>
+          </button>
+          <button type="button" class="category-option ${freq === 'weekly' ? 'active' : ''}" data-freq="weekly" style="color:#2563eb">
+            <div class="category-option-name">Mingguan</div>
+            <div class="category-option-desc">Auto setiap minggu</div>
+          </button>
+          <button type="button" class="category-option ${freq === 'monthly' ? 'active' : ''}" data-freq="monthly" style="color:#c87f1f">
+            <div class="category-option-name">Bulanan</div>
+            <div class="category-option-desc">Auto setiap bulan</div>
+          </button>
+        </div>
       </div>
-      <div class="form-group">
-        <label class="label">Deskripsi Default (opsional)</label>
-        <textarea id="tpl-desc" class="textarea" placeholder="Detail task default...">${escapeHtml(tpl?.description || '')}</textarea>
+
+      <div class="form-group" id="tpl-day-of-week-wrap" style="display:${freq === 'weekly' ? 'block' : 'none'}">
+        <label class="label">Hari dalam Minggu</label>
+        <select id="tpl-day-of-week" class="select">
+          <option value="1" ${dayOfWeek === 1 ? 'selected' : ''}>Senin</option>
+          <option value="2" ${dayOfWeek === 2 ? 'selected' : ''}>Selasa</option>
+          <option value="3" ${dayOfWeek === 3 ? 'selected' : ''}>Rabu</option>
+          <option value="4" ${dayOfWeek === 4 ? 'selected' : ''}>Kamis</option>
+          <option value="5" ${dayOfWeek === 5 ? 'selected' : ''}>Jumat</option>
+          <option value="6" ${dayOfWeek === 6 ? 'selected' : ''}>Sabtu</option>
+          <option value="0" ${dayOfWeek === 0 ? 'selected' : ''}>Minggu</option>
+        </select>
       </div>
+
+      <div class="form-group" id="tpl-day-of-month-wrap" style="display:${freq === 'monthly' ? 'block' : 'none'}">
+        <label class="label">Tanggal dalam Bulan</label>
+        <select id="tpl-day-of-month" class="select">
+          ${Array.from({length: 31}, (_, i) => i + 1).map(d =>
+            `<option value="${d}" ${dayOfMonth === d ? 'selected' : ''}>Tanggal ${d}</option>`
+          ).join('')}
+          <option value="last" ${dayOfMonth === 'last' ? 'selected' : ''}>Tanggal terakhir bulan</option>
+        </select>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="label">Pelaksana Default</label>
+          <select id="tpl-assignee" class="select">${memberOpts}</select>
+        </div>
+        <div class="form-group">
+          <label class="label">Kategori Default</label>
+          <select id="tpl-category" class="select">${catOpts}</select>
+        </div>
+      </div>
+
+      <div class="form-group" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="tpl-active" ${isActive ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+        <label for="tpl-active" style="cursor:pointer;font-size:13px">Template aktif (auto-generate)</label>
+      </div>
+
       <div class="form-group">
-        <label class="label">Checklist Default (1 item per baris, opsional)</label>
-        <textarea id="tpl-checklist" class="textarea" placeholder="Mis:&#10;Buka portal Grab&#10;Update stok&#10;Verifikasi listing" style="font-family:ui-monospace,monospace;font-size:12px">${escapeHtml((tpl?.checklists || []).join('\n'))}</textarea>
+        <label class="label">Daftar Tugas (Item) — tiap item = 1 task</label>
+        <div id="tpl-items-root"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="tpl-add-item" style="margin-top:8px">+ Tambah Item Tugas</button>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:6px">
+          Saat template auto-generate, tiap item akan jadi task terpisah di kanban hari itu.
+        </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close-modal>Batal</button>
       <button class="btn btn-primary" id="tpl-save">${isEdit ? 'Simpan' : 'Bikin Template'}</button>
     </div>
-  `);
+  `, { size: 'lg' });
+
+  // Mutable items state
+  const ITEMS_STATE = { items: [...initialItems] };
+  let selectedFreq = freq;
+
+  function refreshItems() {
+    const root = document.getElementById('tpl-items-root');
+    if (!root) return;
+    root.innerHTML = ITEMS_STATE.items.map((it, idx) => `
+      <div class="checklist-block" data-item-idx="${idx}" style="margin-bottom:8px">
+        <div class="checklist-head">
+          <input class="checklist-title" data-tpl-item-title="${idx}" value="${escapeHtml(it.title || '')}" placeholder="Judul item tugas...">
+          ${ITEMS_STATE.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" data-tpl-del-item="${idx}" style="color:var(--danger)">✕</button>` : ''}
+        </div>
+        <textarea class="textarea" data-tpl-item-desc="${idx}" placeholder="Deskripsi (opsional)" style="margin-top:6px;min-height:50px">${escapeHtml(it.description || '')}</textarea>
+        <textarea class="textarea" data-tpl-item-checklist="${idx}" placeholder="Checklist (1 item per baris, opsional)" style="margin-top:6px;font-family:ui-monospace,monospace;font-size:12px;min-height:60px">${escapeHtml(it.checklist || '')}</textarea>
+      </div>
+    `).join('');
+    // Bind item inputs
+    root.querySelectorAll('[data-tpl-item-title]').forEach(el => {
+      el.addEventListener('input', () => { ITEMS_STATE.items[Number(el.dataset.tplItemTitle)].title = el.value; });
+    });
+    root.querySelectorAll('[data-tpl-item-desc]').forEach(el => {
+      el.addEventListener('input', () => { ITEMS_STATE.items[Number(el.dataset.tplItemDesc)].description = el.value; });
+    });
+    root.querySelectorAll('[data-tpl-item-checklist]').forEach(el => {
+      el.addEventListener('input', () => { ITEMS_STATE.items[Number(el.dataset.tplItemChecklist)].checklist = el.value; });
+    });
+    root.querySelectorAll('[data-tpl-del-item]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.tplDelItem);
+        if (!confirm('Hapus item ini?')) return;
+        ITEMS_STATE.items.splice(idx, 1);
+        refreshItems();
+      });
+    });
+  }
+  refreshItems();
+
+  document.getElementById('tpl-add-item').addEventListener('click', () => {
+    ITEMS_STATE.items.push({ id: uid(), title: '', description: '', checklist: '' });
+    refreshItems();
+  });
+
+  // Frequency selector
+  document.querySelectorAll('[data-freq]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedFreq = btn.dataset.freq;
+      document.querySelectorAll('[data-freq]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tpl-day-of-week-wrap').style.display = selectedFreq === 'weekly' ? 'block' : 'none';
+      document.getElementById('tpl-day-of-month-wrap').style.display = selectedFreq === 'monthly' ? 'block' : 'none';
+    });
+  });
 
   document.getElementById('tpl-save').addEventListener('click', async () => {
     const name = document.getElementById('tpl-name').value.trim();
-    const title = document.getElementById('tpl-title').value.trim();
-    const desc = document.getElementById('tpl-desc').value.trim();
-    const checklistsRaw = document.getElementById('tpl-checklist').value.trim();
-    const checklists = checklistsRaw ? checklistsRaw.split('\n').map(l => l.trim()).filter(Boolean) : [];
     if (!name) { toast('Nama template wajib diisi', 'error'); return; }
+
+    // Validate items: minimal 1 item dengan title
+    const validItems = ITEMS_STATE.items
+      .filter(it => (it.title || '').trim())
+      .map(it => ({
+        id: it.id || uid(),
+        title: it.title.trim(),
+        description: (it.description || '').trim(),
+        checklist: (it.checklist || '').trim().split('\n').map(l => l.trim()).filter(Boolean),
+      }));
+    if (validItems.length === 0) { toast('Minimal 1 item tugas dengan judul', 'error'); return; }
+
+    const dowSel = document.getElementById('tpl-day-of-week');
+    const domSel = document.getElementById('tpl-day-of-month');
+
+    const data = {
+      name,
+      frequency: selectedFreq,
+      defaultAssigneeId: document.getElementById('tpl-assignee').value || null,
+      defaultCategoryId: document.getElementById('tpl-category').value || null,
+      active: document.getElementById('tpl-active').checked,
+      dayOfWeek: selectedFreq === 'weekly' ? Number(dowSel.value) : null,
+      dayOfMonth: selectedFreq === 'monthly'
+        ? (domSel.value === 'last' ? 'last' : Number(domSel.value))
+        : null,
+      items: validItems,
+      updatedAt: serverTimestamp(),
+    };
+
     try {
-      const data = { name, title, description: desc, checklists, updatedAt: serverTimestamp() };
       if (isEdit) {
         await updateDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', tpl.id), data);
         toast('Template tersimpan', 'success');
