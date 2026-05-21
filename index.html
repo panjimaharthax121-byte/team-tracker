@@ -363,6 +363,263 @@
     font-weight: 600;
   }
 
+  /* === BOARD SWITCHER === */
+  .board-switcher {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .board-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-col);
+    border: 1px solid transparent;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .board-chip:hover { background: #e1e7ef; }
+  .board-chip.active {
+    background: white;
+    color: var(--text);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-sm);
+    font-weight: 600;
+  }
+  .board-color {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .board-chip-new {
+    border: 1px dashed var(--border-strong);
+    background: transparent;
+    font-size: 12px;
+  }
+  .board-chip-new:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
+  }
+
+  /* === LABEL CHIPS (di task card & modal) === */
+  .label-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: white;
+    line-height: 1.4;
+  }
+  .label-chip-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .label-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1.5px solid transparent;
+    cursor: pointer;
+    transition: all .15s;
+    background: var(--bg-col);
+    color: var(--text);
+    font-family: inherit;
+  }
+  .label-toggle.active {
+    border-color: currentColor;
+  }
+  .label-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* === COLOR PICKER === */
+  .color-picker {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px var(--border);
+    cursor: pointer;
+    transition: transform .15s;
+  }
+  .color-swatch:hover { transform: scale(1.1); }
+  .color-swatch.active {
+    box-shadow: 0 0 0 2px currentColor;
+    transform: scale(1.05);
+  }
+
+  /* === CHECKLIST === */
+  .checklist-block {
+    background: var(--bg-col);
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+  }
+  .checklist-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .checklist-title {
+    font-weight: 600;
+    font-size: 13px;
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+  .checklist-title:hover:not(:disabled) { background: rgba(0,0,0,0.04); }
+  .checklist-title:focus { background: white; outline: 1px solid var(--primary); }
+  .checklist-progress {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .checklist-progress-bar {
+    height: 3px;
+    background: white;
+    border-radius: 100px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .checklist-progress-fill {
+    height: 100%;
+    background: var(--success);
+    transition: width .25s;
+  }
+  .checklist-items { display: flex; flex-direction: column; gap: 4px; }
+  .checklist-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px;
+    border-radius: 4px;
+  }
+  .checklist-item:hover { background: rgba(0,0,0,0.03); }
+  .checklist-item input[type="checkbox"] {
+    width: 16px; height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary);
+  }
+  .checklist-item-text {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 4px;
+    font-size: 13px;
+    border-radius: 4px;
+  }
+  .checklist-item-text:hover:not(:disabled) { background: rgba(0,0,0,0.04); }
+  .checklist-item-text:focus { background: white; outline: 1px solid var(--primary); }
+  .checklist-item-text.checked { text-decoration: line-through; color: var(--text-muted); }
+  .checklist-item-delete {
+    width: 22px; height: 22px;
+    color: var(--text-light);
+    font-size: 14px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity .15s;
+  }
+  .checklist-item:hover .checklist-item-delete { opacity: 1; }
+  .checklist-item-delete:hover { background: var(--danger-light); color: var(--danger); }
+  .checklist-add-btn {
+    width: 100%;
+    padding: 6px;
+    background: transparent;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 6px;
+  }
+  .checklist-add-btn:hover { color: var(--primary); border-color: var(--primary); }
+
+  /* === DUE DATE BADGE === */
+  .due-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 600;
+    background: var(--bg-col);
+    color: var(--text-muted);
+  }
+  .due-badge.overdue {
+    background: var(--danger-light);
+    color: #991b1b;
+  }
+  .due-badge.today {
+    background: var(--warning-light);
+    color: #92400e;
+  }
+  .due-badge.soon {
+    background: var(--primary-light);
+    color: #1d4ed8;
+  }
+  .due-badge.done {
+    background: var(--success-light);
+    color: #065f46;
+  }
+
+  /* === ACTIVITY LOG === */
+  .activity-list {
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .activity-item {
+    display: flex;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg-col);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .activity-content { flex: 1; line-height: 1.5; }
+  .activity-actor { color: var(--text); font-weight: 600; }
+  .activity-time { font-size: 10.5px; color: var(--text-light); }
+
   /* === PROGRESS BAR (di kanban card) === */
   .task-card-progress {
     margin-top: 8px;
@@ -857,17 +1114,41 @@ const STATE = {
   currentMember: null,   // { id, name, role }
   members: [],
   tasks: [],
+  boards: [],            // semua board
+  labels: [],            // labels untuk board aktif
+  templates: [],         // templates untuk board aktif
+  currentBoardId: null,  // board aktif (null = belum ditentukan)
   selectedDate: todayStr(),
   filterMemberId: null,  // null = semua
+  filterLabelIds: [],    // filter task by label (multi)
   unsubTasks: null,
   unsubMembers: null,
+  unsubBoards: null,
+  unsubLabels: null,
+  unsubTemplates: null,
 };
 
 const LS_KEYS = {
   FB_CONFIG: 'team_tracker.firebaseConfig.v1',
   CURRENT_MEMBER: 'team_tracker.currentMember.v1',
   AUTHED_AT: 'team_tracker.authedAt.v1',
+  CURRENT_BOARD_ID: 'team_tracker.currentBoardId.v1',
 };
+
+// Warna palette untuk boards & labels
+const PALETTE = [
+  { name: 'Biru',   value: '#3b82f6' },
+  { name: 'Ungu',   value: '#8b5cf6' },
+  { name: 'Pink',   value: '#ec4899' },
+  { name: 'Merah',  value: '#ef4444' },
+  { name: 'Orange', value: '#f97316' },
+  { name: 'Kuning', value: '#eab308' },
+  { name: 'Hijau',  value: '#10b981' },
+  { name: 'Tosca',  value: '#06b6d4' },
+  { name: 'Abu',    value: '#64748b' },
+];
+const DEFAULT_BOARD_ID = 'default';
+const DEFAULT_BOARD_NAME = 'Tim B2C';
 
 // Password gate — ganti hash di bawah kalau mau ganti password.
 // Generate hash baru: echo -n "passwordbaru" | shasum -a 256
@@ -1082,15 +1363,15 @@ async function bootstrap() {
 }
 
 async function afterAuth() {
-  // Load current member from localStorage
+  // Load current member & current board from localStorage
   const storedMember = localStorage.getItem(LS_KEYS.CURRENT_MEMBER);
   if (storedMember) {
     try { STATE.currentMember = JSON.parse(storedMember); } catch {}
   }
+  STATE.currentBoardId = localStorage.getItem(LS_KEYS.CURRENT_BOARD_ID) || DEFAULT_BOARD_ID;
 
-  // Subscribe members
+  // Subscribe members; subscribeBoards akan dipanggil setelah members ready
   subscribeMembers();
-  // Wait for first members snapshot then proceed
 }
 
 function subscribeMembers() {
@@ -1119,13 +1400,97 @@ function subscribeMembers() {
     } else if (!STATE.currentMember) {
       renderMemberPicker();
     } else {
-      renderMain();
-      subscribeTasks();
+      // Trigger boards subscription (yang akan trigger labels/templates/tasks)
+      if (!STATE.unsubBoards) subscribeBoards();
+      // Kalau boards sudah ready, langsung render
+      if (STATE.boards.length > 0) renderMain();
     }
   }, (err) => {
     console.error('Members listener error', err);
     toast('Gagal load anggota: ' + err.message, 'error');
   });
+}
+
+async function subscribeBoards() {
+  const boardsRef = collection(STATE.db, 'boards');
+  STATE.unsubBoards = onSnapshot(boardsRef, async (snap) => {
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    STATE.boards = all
+      .filter(b => !b.archived)
+      .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+
+    // Auto-create default board kalau belum ada
+    if (all.length === 0 && STATE.currentMember) {
+      try {
+        await setDoc(doc(STATE.db, 'boards', DEFAULT_BOARD_ID), {
+          name: DEFAULT_BOARD_NAME,
+          color: PALETTE[0].value,
+          createdById: STATE.currentMember.id,
+          createdByName: STATE.currentMember.name,
+          createdAt: serverTimestamp(),
+          archived: false,
+        });
+        return; // Listener fires lagi
+      } catch (err) {
+        console.error('Gagal bikin default board', err);
+        toast('Gagal bikin default board: ' + err.message, 'error');
+      }
+    }
+
+    // Pastikan currentBoardId valid
+    if (STATE.boards.length > 0 && !STATE.boards.find(b => b.id === STATE.currentBoardId)) {
+      STATE.currentBoardId = STATE.boards[0].id;
+      localStorage.setItem(LS_KEYS.CURRENT_BOARD_ID, STATE.currentBoardId);
+    }
+
+    // Subscribe ke labels & templates untuk board aktif
+    subscribeLabels();
+    subscribeTemplates();
+    subscribeTasks();
+
+    // Re-render
+    if (STATE.currentMember && STATE.boards.length > 0) renderMain();
+  }, (err) => {
+    console.error('Boards listener error', err);
+    toast('Gagal load boards: ' + err.message, 'error');
+  });
+}
+
+function subscribeLabels() {
+  if (STATE.unsubLabels) { STATE.unsubLabels(); STATE.unsubLabels = null; }
+  if (!STATE.currentBoardId) return;
+  const labelsRef = collection(STATE.db, 'boards', STATE.currentBoardId, 'labels');
+  STATE.unsubLabels = onSnapshot(labelsRef, (snap) => {
+    STATE.labels = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+    renderKanban();
+  }, (err) => console.error('Labels listener error', err));
+}
+
+function subscribeTemplates() {
+  if (STATE.unsubTemplates) { STATE.unsubTemplates(); STATE.unsubTemplates = null; }
+  if (!STATE.currentBoardId) return;
+  const tplRef = collection(STATE.db, 'boards', STATE.currentBoardId, 'templates');
+  STATE.unsubTemplates = onSnapshot(tplRef, (snap) => {
+    STATE.templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+  }, (err) => console.error('Templates listener error', err));
+}
+
+function switchBoard(boardId) {
+  if (!boardId || boardId === STATE.currentBoardId) return;
+  STATE.currentBoardId = boardId;
+  localStorage.setItem(LS_KEYS.CURRENT_BOARD_ID, boardId);
+  STATE.filterLabelIds = []; // reset label filter
+  subscribeLabels();
+  subscribeTemplates();
+  // subscribeTasks tetap (query by date sama), filtering by board client-side
+  renderMain();
+}
+
+// Helper — task yang visible di board aktif
+function visibleTasks() {
+  return STATE.tasks.filter(t => (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId);
 }
 
 function subscribeTasks() {
@@ -1396,12 +1761,38 @@ function renderMain() {
     </button>
   `).join('');
 
+  // Board switcher
+  const boardChips = STATE.boards.map(b => `
+    <button class="board-chip ${b.id === STATE.currentBoardId ? 'active' : ''}" data-switch-board="${b.id}">
+      <span class="board-color" style="background:${b.color || '#3b82f6'}"></span>
+      ${escapeHtml(b.name)}
+    </button>
+  `).join('');
+
+  // Label filter chips
+  const labelFilterHtml = STATE.labels.length > 0 ? `
+    <div class="chip-row" style="gap:4px">
+      ${STATE.labels.map(l => `
+        <button class="label-toggle ${STATE.filterLabelIds.includes(l.id) ? 'active' : ''}"
+          data-filter-label="${l.id}" style="color:${l.color}">
+          <span class="label-dot" style="background:${l.color}"></span>
+          ${escapeHtml(l.name)}
+        </button>
+      `).join('')}
+    </div>
+  ` : '';
+
   document.getElementById('app').innerHTML = `
     <div class="app-shell">
       <div class="header">
         <div class="header-brand">
           <div class="header-brand-icon">T</div>
           <div class="header-brand-text">Team Tracker</div>
+        </div>
+
+        <div class="board-switcher">
+          ${boardChips}
+          ${isAdmin ? `<button class="board-chip board-chip-new" id="btn-manage-boards" title="Kelola boards">+ Board</button>` : ''}
         </div>
 
         <div class="header-controls">
@@ -1414,10 +1805,13 @@ function renderMain() {
           <div class="chip-row" id="member-filter-chips">
             ${allChip}${memberChips}
           </div>
+          ${labelFilterHtml}
         </div>
 
         <div class="header-right">
           ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-members">👥 Anggota</button>` : ''}
+          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-labels">🏷️ Labels</button>` : ''}
+          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-templates">📋 Template</button>` : ''}
           ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-share-kit">🔗 Bagikan</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="btn-export">📊 Export</button>
           <div class="user-badge">
@@ -1455,8 +1849,26 @@ function renderMain() {
       renderMain();
     });
   });
+  // Board switcher
+  document.querySelectorAll('[data-switch-board]').forEach(btn => {
+    btn.addEventListener('click', () => switchBoard(btn.dataset.switchBoard));
+  });
+  // Label filter
+  document.querySelectorAll('[data-filter-label]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.filterLabel;
+      const idx = STATE.filterLabelIds.indexOf(id);
+      if (idx === -1) STATE.filterLabelIds.push(id);
+      else STATE.filterLabelIds.splice(idx, 1);
+      renderMain();
+    });
+  });
+
   document.getElementById('btn-new-task').addEventListener('click', () => openTaskModal());
   if (isAdmin) document.getElementById('btn-manage-members').addEventListener('click', openMembersModal);
+  if (isAdmin) document.getElementById('btn-manage-boards').addEventListener('click', openBoardsModal);
+  if (isAdmin) document.getElementById('btn-manage-labels').addEventListener('click', openLabelsModal);
+  if (isAdmin) document.getElementById('btn-manage-templates').addEventListener('click', openTemplatesModal);
   if (isAdmin) document.getElementById('btn-share-kit').addEventListener('click', openShareKitModal);
   document.getElementById('btn-export').addEventListener('click', openExportModal);
   document.getElementById('btn-logout').addEventListener('click', () => {
@@ -1475,7 +1887,13 @@ function renderKanban() {
   const root = document.getElementById('kanban-root');
   if (!root) return;
 
-  const filtered = STATE.tasks.filter(t => !STATE.filterMemberId || t.assigneeId === STATE.filterMemberId);
+  let filtered = visibleTasks();
+  if (STATE.filterMemberId) filtered = filtered.filter(t => t.assigneeId === STATE.filterMemberId);
+  if (STATE.filterLabelIds.length > 0) {
+    filtered = filtered.filter(t =>
+      (t.labelIds || []).some(lid => STATE.filterLabelIds.includes(lid))
+    );
+  }
 
   const cols = [
     { key: 'todo', label: 'Todo', icon: '○' },
@@ -1565,8 +1983,29 @@ function renderTaskCard(t) {
   const locked = !canEditTask(t);
   const progress = Number(t.progress) || 0;
   const fillClass = progressFillClass(progress);
+
+  // Labels
+  const taskLabels = (t.labelIds || [])
+    .map(id => STATE.labels.find(l => l.id === id))
+    .filter(Boolean);
+  const labelsHtml = taskLabels.length > 0 ? `
+    <div class="label-chip-row">
+      ${taskLabels.map(l => `<span class="label-chip" style="background:${l.color}">${escapeHtml(l.name)}</span>`).join('')}
+    </div>
+  ` : '';
+
+  // Due date badge
+  const dueBadge = renderDueBadge(t);
+
+  // Checklist progress
+  const checklistInfo = computeChecklistTotal(t);
+  const checklistBadge = checklistInfo.total > 0
+    ? `<span title="${checklistInfo.done} dari ${checklistInfo.total} checklist selesai">☑️ ${checklistInfo.done}/${checklistInfo.total}</span>`
+    : '';
+
   return `
     <div class="task-card col-${t.status || 'todo'} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
+      ${labelsHtml}
       <div class="task-card-title">${escapeHtml(t.title)}</div>
       ${desc}
       <div class="task-card-progress">
@@ -1579,11 +2018,33 @@ function renderTaskCard(t) {
         <span class="task-card-assignee">
           ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
         </span>
+        ${dueBadge}
+        ${checklistBadge}
         ${commentCount ? `<span class="task-card-comments-badge">💬 ${commentCount}</span>` : ''}
         <span style="margin-left:auto">${timeAgo(t.updatedAt || t.createdAt)}</span>
       </div>
     </div>
   `;
+}
+
+function computeChecklistTotal(task) {
+  let done = 0, total = 0;
+  (task.checklists || []).forEach(cl => {
+    (cl.items || []).forEach(it => { total++; if (it.done) done++; });
+  });
+  return { done, total };
+}
+
+function renderDueBadge(task) {
+  if (!task.dueDate) return '';
+  const today = todayStr();
+  const cls = task.status === 'done'
+    ? 'done'
+    : (task.dueDate < today ? 'overdue' : (task.dueDate === today ? 'today' : 'soon'));
+  // Format human-readable
+  const [y, m, d] = task.dueDate.split('-');
+  const label = `${d}/${m}`;
+  return `<span class="due-badge ${cls}" title="Deadline: ${task.dueDate}">📅 ${label}</span>`;
 }
 
 /* =============================================================
@@ -1603,6 +2064,13 @@ function openTaskModal(taskId = null, presets = {}) {
   // Default assignee: me (kalau create), atau dari task (kalau edit)
   const defaultAssigneeId = task?.assigneeId || me.id;
 
+  // Apply preset values
+  const initialTitle = task?.title ?? presets.title ?? '';
+  const initialDesc = task?.description ?? presets.description ?? '';
+  const initialChecklists = task?.checklists ?? presets.checklists ?? [];
+  const initialLabelIds = task?.labelIds ?? presets.labelIds ?? [];
+  const initialDueDate = task?.dueDate ?? presets.dueDate ?? '';
+
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
   ).join('');
@@ -1610,6 +2078,42 @@ function openTaskModal(taskId = null, presets = {}) {
   // Non-admin can only assign to self (saat create); read-only dipakai untuk edit task orang lain
   const canChangeAssignee = isAdmin && !readOnly;
   const disabledAttr = readOnly ? 'disabled' : '';
+
+  // Template picker — kalau create mode & ada template di board
+  const templatePicker = !isEdit && STATE.templates.length > 0 ? `
+    <div class="form-group">
+      <label class="label">Pakai Template (opsional)</label>
+      <select id="t-template" class="select">
+        <option value="">— Tanpa template —</option>
+        ${STATE.templates.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
+      </select>
+    </div>
+  ` : '';
+
+  // Labels section
+  const labelsSection = STATE.labels.length > 0 ? `
+    <div class="form-group">
+      <label class="label">Label</label>
+      <div class="chip-row" id="t-labels-row">
+        ${STATE.labels.map(l => `
+          <button type="button" class="label-toggle ${initialLabelIds.includes(l.id) ? 'active' : ''}"
+            data-toggle-label="${l.id}" style="color:${l.color}" ${disabledAttr}>
+            <span class="label-dot" style="background:${l.color}"></span>
+            ${escapeHtml(l.name)}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  ` : '';
+
+  // Checklists section
+  const checklistsSection = `
+    <div class="form-group">
+      <label class="label">Checklist</label>
+      <div id="t-checklists-root">${renderChecklistsEditor(initialChecklists, readOnly)}</div>
+      ${readOnly ? '' : `<button type="button" class="btn btn-secondary btn-sm" id="t-add-checklist" style="margin-top:6px">+ Tambah Checklist Baru</button>`}
+    </div>
+  `;
 
   const html = `
     <div class="modal-header">
@@ -1622,13 +2126,15 @@ function openTaskModal(taskId = null, presets = {}) {
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
+      ${templatePicker}
       <div class="form-group">
         <label class="label">Judul Tugas</label>
-        <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(task?.title || '')}" autocomplete="off" ${disabledAttr}>
+        <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(initialTitle)}" autocomplete="off" ${disabledAttr}>
       </div>
+      ${labelsSection}
       <div class="form-group">
         <label class="label">Deskripsi (opsional)</label>
-        <textarea id="t-desc" class="textarea" placeholder="Detail tugas..." ${disabledAttr}>${escapeHtml(task?.description || '')}</textarea>
+        <textarea id="t-desc" class="textarea" placeholder="Detail tugas..." ${disabledAttr}>${escapeHtml(initialDesc)}</textarea>
       </div>
       <div class="form-group">
         ${renderProgressControl(task?.progress ?? presets.progress ?? 0, readOnly)}
@@ -1640,12 +2146,20 @@ function openTaskModal(taskId = null, presets = {}) {
           <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
         </div>
         <div class="form-group">
-          <label class="label">Tanggal</label>
+          <label class="label">Tanggal Aktif</label>
           <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
         </div>
       </div>
 
+      <div class="form-group">
+        <label class="label">Deadline (opsional)</label>
+        <input type="date" id="t-due" class="input" value="${initialDueDate}" ${disabledAttr}>
+      </div>
+
+      ${checklistsSection}
+
       ${isEdit ? renderTaskMetaInfo(task) : ''}
+      ${isEdit ? renderActivitySection(task) : ''}
       ${isEdit ? renderCommentsSection(task) : ''}
     </div>
     <div class="modal-footer">
@@ -1667,38 +2181,71 @@ function openTaskModal(taskId = null, presets = {}) {
   // Bind progress slider — update label/status hint/quick btn active live
   bindProgressControl();
 
+  // Mutable state untuk modal (labels & checklists)
+  const MODAL_STATE = {
+    labelIds: [...initialLabelIds],
+    checklists: JSON.parse(JSON.stringify(initialChecklists)),
+  };
+
+  bindLabelToggles(MODAL_STATE);
+  bindChecklistEditor(MODAL_STATE, readOnly);
+  bindTemplatePicker();
+
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
     const desc = document.getElementById('t-desc').value.trim();
     const progress = Number(document.getElementById('t-progress').value) || 0;
-    const status = progressToStatus(progress);
+    let status = progressToStatus(progress);
     const assigneeId = document.getElementById('t-assignee').value;
     const date = document.getElementById('t-date').value;
+    const dueDate = document.getElementById('t-due').value || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
     if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
     const assignee = STATE.members.find(m => m.id === assigneeId);
     if (!assignee) { toast('Pelaksana tidak valid', 'error'); return; }
 
+    // Auto-sync progress kalau ada checklist
+    const cInfo = computeChecklistTotalArr(MODAL_STATE.checklists);
+    let finalProgress = progress;
+    if (cInfo.total > 0 && (cInfo.done === cInfo.total) && progress < 100) {
+      // Semua checklist done → set progress 100 kalau user belum naikin
+      finalProgress = 100;
+      status = 'done';
+    }
+
     try {
       if (isEdit) {
         const update = {
-          title, description: desc, status, progress, date,
+          title, description: desc, status, progress: finalProgress, date, dueDate,
           assigneeId, assigneeName: assignee.name,
+          labelIds: MODAL_STATE.labelIds,
+          checklists: MODAL_STATE.checklists,
           updatedAt: serverTimestamp(),
         };
+        // Activity log
+        const activity = task.activity || [];
+        const newActivities = diffActivities(task, update, me);
+        if (newActivities.length > 0) update.activity = [...activity, ...newActivities];
         if (status === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
         if (status !== 'done' && task.status === 'done') update.completedAt = null;
         await updateDoc(doc(STATE.db, 'tasks', task.id), update);
         toast('Tugas tersimpan', 'success');
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
-          title, description: desc, status, progress, date,
+          title, description: desc, status, progress: finalProgress, date, dueDate,
           assigneeId, assigneeName: assignee.name,
+          boardId: STATE.currentBoardId,
+          labelIds: MODAL_STATE.labelIds,
+          checklists: MODAL_STATE.checklists,
           createdById: me.id, createdByName: me.name,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           completedAt: status === 'done' ? serverTimestamp() : null,
           comments: [],
+          activity: [{
+            id: uid(), type: 'created', byId: me.id, byName: me.name,
+            at: new Date().toISOString(),
+          }],
         });
         toast('Tugas dibuat', 'success');
       }
@@ -1727,6 +2274,231 @@ function openTaskModal(taskId = null, presets = {}) {
     bindCommentForm(task);
     bindCommentDelete(task);
   }
+}
+
+// === Checklist helpers ===
+function computeChecklistTotalArr(checklists) {
+  let done = 0, total = 0;
+  (checklists || []).forEach(cl => {
+    (cl.items || []).forEach(it => { total++; if (it.done) done++; });
+  });
+  return { done, total };
+}
+
+function renderChecklistsEditor(checklists, readOnly) {
+  if (!checklists || checklists.length === 0) {
+    return readOnly
+      ? '<div style="font-size:12px;color:var(--text-light);text-align:center;padding:8px">Tidak ada checklist</div>'
+      : '';
+  }
+  return checklists.map((cl, ci) => {
+    const items = cl.items || [];
+    const done = items.filter(i => i.done).length;
+    const total = items.length;
+    const pct = total > 0 ? Math.round(done * 100 / total) : 0;
+    return `
+      <div class="checklist-block" data-cl-idx="${ci}">
+        <div class="checklist-head">
+          <input class="checklist-title" data-cl-title="${ci}" value="${escapeHtml(cl.title || '')}" placeholder="Judul checklist..." ${readOnly ? 'disabled' : ''}>
+          <span class="checklist-progress">${done}/${total}</span>
+          ${readOnly ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-del-cl="${ci}" style="color:var(--danger)">✕</button>`}
+        </div>
+        <div class="checklist-progress-bar">
+          <div class="checklist-progress-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="checklist-items">
+          ${items.map((it, ii) => `
+            <div class="checklist-item">
+              <input type="checkbox" data-toggle-item="${ci}.${ii}" ${it.done ? 'checked' : ''} ${readOnly ? 'disabled' : ''}>
+              <input class="checklist-item-text ${it.done ? 'checked' : ''}" data-item-text="${ci}.${ii}" value="${escapeHtml(it.text || '')}" placeholder="Item..." ${readOnly ? 'disabled' : ''}>
+              ${readOnly ? '' : `<button type="button" class="checklist-item-delete" data-del-item="${ci}.${ii}">✕</button>`}
+            </div>
+          `).join('')}
+        </div>
+        ${readOnly ? '' : `<button type="button" class="checklist-add-btn" data-add-item="${ci}">+ Tambah Item</button>`}
+      </div>
+    `;
+  }).join('');
+}
+
+function bindChecklistEditor(state, readOnly) {
+  const root = document.getElementById('t-checklists-root');
+  const addBtn = document.getElementById('t-add-checklist');
+  if (!root) return;
+
+  function refresh() {
+    root.innerHTML = renderChecklistsEditor(state.checklists, readOnly);
+    attachListeners();
+  }
+
+  function attachListeners() {
+    if (readOnly) return;
+    // Toggle item done
+    root.querySelectorAll('[data-toggle-item]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const [ci, ii] = cb.dataset.toggleItem.split('.').map(Number);
+        state.checklists[ci].items[ii].done = cb.checked;
+        refresh();
+      });
+    });
+    // Edit item text
+    root.querySelectorAll('[data-item-text]').forEach(input => {
+      input.addEventListener('input', () => {
+        const [ci, ii] = input.dataset.itemText.split('.').map(Number);
+        state.checklists[ci].items[ii].text = input.value;
+      });
+    });
+    // Edit checklist title
+    root.querySelectorAll('[data-cl-title]').forEach(input => {
+      input.addEventListener('input', () => {
+        const ci = Number(input.dataset.clTitle);
+        state.checklists[ci].title = input.value;
+      });
+    });
+    // Delete checklist
+    root.querySelectorAll('[data-del-cl]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ci = Number(btn.dataset.delCl);
+        if (!confirm('Hapus checklist ini?')) return;
+        state.checklists.splice(ci, 1);
+        refresh();
+      });
+    });
+    // Delete item
+    root.querySelectorAll('[data-del-item]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [ci, ii] = btn.dataset.delItem.split('.').map(Number);
+        state.checklists[ci].items.splice(ii, 1);
+        refresh();
+      });
+    });
+    // Add item
+    root.querySelectorAll('[data-add-item]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ci = Number(btn.dataset.addItem);
+        state.checklists[ci].items.push({ id: uid(), text: '', done: false });
+        refresh();
+        // Focus the new item input
+        setTimeout(() => {
+          const inputs = root.querySelectorAll(`[data-cl-idx="${ci}"] [data-item-text]`);
+          if (inputs.length) inputs[inputs.length - 1].focus();
+        }, 50);
+      });
+    });
+  }
+
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      state.checklists.push({ id: uid(), title: 'Checklist', items: [] });
+      refresh();
+    });
+  }
+  attachListeners();
+}
+
+function bindLabelToggles(state) {
+  document.querySelectorAll('[data-toggle-label]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      const id = btn.dataset.toggleLabel;
+      const idx = state.labelIds.indexOf(id);
+      if (idx === -1) {
+        state.labelIds.push(id);
+        btn.classList.add('active');
+      } else {
+        state.labelIds.splice(idx, 1);
+        btn.classList.remove('active');
+      }
+    });
+  });
+}
+
+function bindTemplatePicker() {
+  const sel = document.getElementById('t-template');
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    const id = sel.value;
+    if (!id) return;
+    const tpl = STATE.templates.find(t => t.id === id);
+    if (!tpl) return;
+    // Fill title if empty
+    const titleEl = document.getElementById('t-title');
+    if (titleEl && !titleEl.value.trim() && tpl.title) titleEl.value = tpl.title;
+    // Fill description if empty
+    const descEl = document.getElementById('t-desc');
+    if (descEl && !descEl.value.trim() && tpl.description) descEl.value = tpl.description;
+    // Add checklist from template (only if no existing checklist)
+    const checklistRoot = document.getElementById('t-checklists-root');
+    if (checklistRoot && (tpl.checklists || []).length > 0 && checklistRoot.innerHTML.trim() === '') {
+      // We need access to MODAL_STATE — re-trigger via custom event
+      const ev = new CustomEvent('template-applied', { detail: { template: tpl } });
+      document.dispatchEvent(ev);
+    }
+    toast(`Template "${tpl.name}" diterapkan`, 'success');
+  });
+  // Listen for template-applied event (binds inside bindChecklistEditor scope)
+}
+
+// === Activity helpers ===
+function diffActivities(oldTask, newTask, me) {
+  const news = [];
+  const ts = new Date().toISOString();
+  const oldP = Number(oldTask.progress) || 0;
+  const newP = Number(newTask.progress) || 0;
+  if (oldP !== newP) {
+    news.push({
+      id: uid(), type: 'progress_changed',
+      byId: me.id, byName: me.name, at: ts,
+      from: oldP, to: newP,
+    });
+  }
+  if ((oldTask.assigneeId || '') !== (newTask.assigneeId || '')) {
+    news.push({
+      id: uid(), type: 'assignee_changed',
+      byId: me.id, byName: me.name, at: ts,
+      from: oldTask.assigneeName, to: newTask.assigneeName,
+    });
+  }
+  if (oldTask.status !== newTask.status) {
+    news.push({
+      id: uid(), type: 'status_changed',
+      byId: me.id, byName: me.name, at: ts,
+      from: oldTask.status, to: newTask.status,
+    });
+  }
+  return news;
+}
+
+function renderActivitySection(task) {
+  const activity = task.activity || [];
+  if (activity.length === 0) return '';
+  const items = activity.slice().reverse().slice(0, 30).map(a => {
+    let text = '';
+    switch (a.type) {
+      case 'created': text = 'membuat tugas ini'; break;
+      case 'status_changed': text = `ubah status dari <strong>${a.from || '?'}</strong> ke <strong>${a.to}</strong>`; break;
+      case 'progress_changed': text = `update progress dari <strong>${a.from}%</strong> ke <strong>${a.to}%</strong>`; break;
+      case 'assignee_changed': text = `pindah pelaksana dari <strong>${escapeHtml(a.from || '?')}</strong> ke <strong>${escapeHtml(a.to || '?')}</strong>`; break;
+      case 'completed': text = 'tandai selesai'; break;
+      default: text = a.type;
+    }
+    const icon = a.type === 'progress_changed' ? '📊' : a.type === 'status_changed' ? '🔄' : a.type === 'assignee_changed' ? '👤' : '✨';
+    return `
+      <div class="activity-item">
+        <div class="activity-icon">${icon}</div>
+        <div class="activity-content">
+          <span class="activity-actor">${escapeHtml(a.byName || '?')}</span> ${text}
+          <div class="activity-time">${timeAgo(a.at)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="comments-section">
+      <div class="comments-title">📜 Riwayat Aktivitas</div>
+      <div class="activity-list">${items}</div>
+    </div>
+  `;
 }
 
 function bindProgressControl() {
@@ -1891,6 +2663,7 @@ function bindCommentDelete(task) {
 async function updateTaskStatus(taskId, newStatus) {
   const task = STATE.tasks.find(t => t.id === taskId);
   if (!task) return;
+  const me = STATE.currentMember;
   const newProgress = statusToProgress(newStatus, task.progress);
   const update = {
     status: newStatus,
@@ -1899,6 +2672,28 @@ async function updateTaskStatus(taskId, newStatus) {
   };
   if (newStatus === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
   if (newStatus !== 'done' && task.status === 'done') update.completedAt = null;
+
+  // Activity log
+  const ts = new Date().toISOString();
+  const newActivities = [];
+  if (task.status !== newStatus) {
+    newActivities.push({
+      id: uid(), type: 'status_changed',
+      byId: me.id, byName: me.name, at: ts,
+      from: task.status, to: newStatus,
+    });
+  }
+  if ((task.progress || 0) !== newProgress) {
+    newActivities.push({
+      id: uid(), type: 'progress_changed',
+      byId: me.id, byName: me.name, at: ts,
+      from: task.progress || 0, to: newProgress,
+    });
+  }
+  if (newActivities.length > 0) {
+    update.activity = [...(task.activity || []), ...newActivities];
+  }
+
   try {
     await updateDoc(doc(STATE.db, 'tasks', taskId), update);
   } catch (err) {
@@ -2006,6 +2801,350 @@ function openMembersModal() {
         toast('Gagal: ' + err.message, 'error');
       }
     });
+  });
+}
+
+/* =============================================================
+   BOARDS MODAL (admin only)
+   ============================================================= */
+function openBoardsModal() {
+  const me = STATE.currentMember;
+  if (me.role !== 'admin') return;
+
+  const colorOpts = PALETTE.map((p, i) =>
+    `<button type="button" class="color-swatch ${i === 0 ? 'active' : ''}" style="background:${p.value};color:${p.value}" data-new-board-color="${p.value}" title="${p.name}"></button>`
+  ).join('');
+
+  const list = STATE.boards.map(b => {
+    const isDefault = b.id === DEFAULT_BOARD_ID;
+    const taskCount = STATE.tasks.filter(t => (t.boardId || DEFAULT_BOARD_ID) === b.id).length;
+    return `
+      <div class="member-row">
+        <span class="board-color" style="background:${b.color || '#3b82f6'};width:18px;height:18px"></span>
+        <div class="member-info">
+          <div class="member-name">${escapeHtml(b.name)} ${isDefault ? '<span style="font-size:11px;color:var(--text-muted)">(default)</span>' : ''}</div>
+          <div class="member-meta">${taskCount} task pada tanggal aktif · dibuat ${timeAgo(b.createdAt)}</div>
+        </div>
+        <div class="member-actions">
+          <button class="btn btn-secondary btn-sm" data-rename-board="${b.id}">Rename</button>
+          ${!isDefault ? `<button class="btn btn-danger btn-sm" data-archive-board="${b.id}">Arsip</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">📋 Kelola Boards</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:18px;padding:12px 14px;background:var(--bg-col);border-radius:var(--radius)">
+        <label class="label">Bikin Board Baru</label>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <input id="new-board-name" class="input" placeholder="Mis: Project Q3, Pareto Outlet" style="flex:1;min-width:200px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="color-picker" id="new-board-colors">${colorOpts}</div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" id="new-board-add" style="margin-top:10px">+ Bikin Board</button>
+      </div>
+      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Boards Aktif</h4>
+      <div class="member-list">${list}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
+
+  let selectedColor = PALETTE[0].value;
+  document.querySelectorAll('[data-new-board-color]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedColor = btn.dataset.newBoardColor;
+      document.querySelectorAll('[data-new-board-color]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  document.getElementById('new-board-add').addEventListener('click', async () => {
+    const name = document.getElementById('new-board-name').value.trim();
+    if (!name) { toast('Nama board wajib diisi', 'error'); return; }
+    try {
+      await addDoc(collection(STATE.db, 'boards'), {
+        name, color: selectedColor,
+        createdById: me.id, createdByName: me.name,
+        createdAt: serverTimestamp(),
+        archived: false,
+      });
+      toast(`Board "${name}" dibuat`, 'success');
+      closeModal();
+      setTimeout(openBoardsModal, 200);
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  });
+
+  document.querySelectorAll('[data-rename-board]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.renameBoard;
+      const b = STATE.boards.find(x => x.id === id);
+      const newName = prompt('Nama board baru:', b.name);
+      if (!newName || newName.trim() === b.name) return;
+      try {
+        await updateDoc(doc(STATE.db, 'boards', id), { name: newName.trim() });
+        toast('Board di-rename', 'success');
+        setTimeout(openBoardsModal, 200);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-archive-board]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.archiveBoard;
+      const b = STATE.boards.find(x => x.id === id);
+      if (!confirm(`Arsipkan board "${b.name}"?\nBoard ini akan hilang dari switcher. Task di dalamnya tetap ada di Firestore tapi tidak terlihat.`)) return;
+      try {
+        await updateDoc(doc(STATE.db, 'boards', id), { archived: true });
+        toast('Board di-arsipkan', 'success');
+        closeModal();
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+/* =============================================================
+   LABELS MODAL (admin only)
+   ============================================================= */
+function openLabelsModal() {
+  const me = STATE.currentMember;
+  if (me.role !== 'admin') return;
+
+  const board = STATE.boards.find(b => b.id === STATE.currentBoardId);
+  if (!board) return;
+
+  const colorOpts = PALETTE.map((p, i) =>
+    `<button type="button" class="color-swatch ${i === 0 ? 'active' : ''}" style="background:${p.value};color:${p.value}" data-new-label-color="${p.value}" title="${p.name}"></button>`
+  ).join('');
+
+  const list = STATE.labels.map(l => {
+    const taskCount = STATE.tasks.filter(t => (t.labelIds || []).includes(l.id)).length;
+    return `
+      <div class="member-row">
+        <span class="label-chip" style="background:${l.color}">${escapeHtml(l.name)}</span>
+        <div class="member-info">
+          <div class="member-meta">${taskCount} task pada tanggal aktif</div>
+        </div>
+        <div class="member-actions">
+          <button class="btn btn-secondary btn-sm" data-rename-label="${l.id}">Rename</button>
+          <button class="btn btn-danger btn-sm" data-del-label="${l.id}">Hapus</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">🏷️ Kelola Labels — ${escapeHtml(board.name)}</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
+        Labels khusus untuk board ini. Bisa dipakai buat tag task (mis: Urgent, Routine, Pelaporan).
+      </p>
+      <div style="margin-bottom:18px;padding:12px 14px;background:var(--bg-col);border-radius:var(--radius)">
+        <label class="label">Bikin Label Baru</label>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <input id="new-label-name" class="input" placeholder="Mis: Urgent, Routine" style="flex:1;min-width:160px">
+          <div class="color-picker" id="new-label-colors">${colorOpts}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" id="new-label-add" style="margin-top:10px">+ Bikin Label</button>
+      </div>
+      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Labels di Board "${escapeHtml(board.name)}"</h4>
+      ${STATE.labels.length === 0 ? '<div style="color:var(--text-light);font-size:13px;text-align:center;padding:20px">Belum ada label. Bikin satu di atas.</div>' : `<div class="member-list">${list}</div>`}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
+
+  let selectedColor = PALETTE[0].value;
+  document.querySelectorAll('[data-new-label-color]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedColor = btn.dataset.newLabelColor;
+      document.querySelectorAll('[data-new-label-color]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  document.getElementById('new-label-add').addEventListener('click', async () => {
+    const name = document.getElementById('new-label-name').value.trim();
+    if (!name) { toast('Nama label wajib diisi', 'error'); return; }
+    try {
+      await addDoc(collection(STATE.db, 'boards', STATE.currentBoardId, 'labels'), {
+        name, color: selectedColor, createdAt: serverTimestamp(),
+      });
+      toast(`Label "${name}" dibuat`, 'success');
+      closeModal();
+      setTimeout(openLabelsModal, 200);
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  });
+
+  document.querySelectorAll('[data-rename-label]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.renameLabel;
+      const l = STATE.labels.find(x => x.id === id);
+      const newName = prompt('Nama label baru:', l.name);
+      if (!newName || newName.trim() === l.name) return;
+      try {
+        await updateDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'labels', id), { name: newName.trim() });
+        toast('Label di-rename', 'success');
+        setTimeout(openLabelsModal, 200);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-del-label]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.delLabel;
+      const l = STATE.labels.find(x => x.id === id);
+      if (!confirm(`Hapus label "${l.name}"?\nTask yang punya label ini akan kehilangan tag-nya.`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'labels', id));
+        toast('Label dihapus', 'success');
+        setTimeout(openLabelsModal, 200);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+/* =============================================================
+   TEMPLATES MODAL (admin only)
+   ============================================================= */
+function openTemplatesModal() {
+  const me = STATE.currentMember;
+  if (me.role !== 'admin') return;
+
+  const board = STATE.boards.find(b => b.id === STATE.currentBoardId);
+  if (!board) return;
+
+  const list = STATE.templates.map(t => `
+    <div class="member-row">
+      <div class="member-info">
+        <div class="member-name">${escapeHtml(t.name)}</div>
+        <div class="member-meta">
+          ${t.title ? `Judul default: ${escapeHtml(t.title)} · ` : ''}${(t.checklists || []).length} checklist
+        </div>
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-secondary btn-sm" data-edit-tpl="${t.id}">Edit</button>
+        <button class="btn btn-danger btn-sm" data-del-tpl="${t.id}">Hapus</button>
+      </div>
+    </div>
+  `).join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">📋 Kelola Templates — ${escapeHtml(board.name)}</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
+        Template dipakai saat bikin task baru — tinggal pilih, judul & checklist akan terisi otomatis.
+      </p>
+      <button class="btn btn-primary" id="new-tpl-btn" style="margin-bottom:18px">+ Bikin Template Baru</button>
+      <h4 style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">Templates di Board "${escapeHtml(board.name)}"</h4>
+      ${STATE.templates.length === 0 ? '<div style="color:var(--text-light);font-size:13px;text-align:center;padding:20px">Belum ada template.</div>' : `<div class="member-list">${list}</div>`}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `, { size: 'lg' });
+
+  document.getElementById('new-tpl-btn').addEventListener('click', () => openTemplateEditor(null));
+  document.querySelectorAll('[data-edit-tpl]').forEach(btn => {
+    btn.addEventListener('click', () => openTemplateEditor(btn.dataset.editTpl));
+  });
+  document.querySelectorAll('[data-del-tpl]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.delTpl;
+      const t = STATE.templates.find(x => x.id === id);
+      if (!confirm(`Hapus template "${t.name}"?`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', id));
+        toast('Template dihapus', 'success');
+        setTimeout(openTemplatesModal, 200);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+function openTemplateEditor(tplId) {
+  const tpl = tplId ? STATE.templates.find(t => t.id === tplId) : null;
+  const isEdit = !!tpl;
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">${isEdit ? 'Edit' : 'Bikin'} Template</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="label">Nama Template (untuk pilihan)</label>
+        <input id="tpl-name" class="input" placeholder="Mis: Laporan Harian, Restock GrabMart" value="${escapeHtml(tpl?.name || '')}">
+      </div>
+      <div class="form-group">
+        <label class="label">Judul Task Default (opsional)</label>
+        <input id="tpl-title" class="input" placeholder="Akan muncul sebagai judul task waktu pakai template ini" value="${escapeHtml(tpl?.title || '')}">
+      </div>
+      <div class="form-group">
+        <label class="label">Deskripsi Default (opsional)</label>
+        <textarea id="tpl-desc" class="textarea" placeholder="Detail task default...">${escapeHtml(tpl?.description || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="label">Checklist Default (1 item per baris, opsional)</label>
+        <textarea id="tpl-checklist" class="textarea" placeholder="Mis:&#10;Buka portal Grab&#10;Update stok&#10;Verifikasi listing" style="font-family:ui-monospace,monospace;font-size:12px">${escapeHtml((tpl?.checklists || []).join('\n'))}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="tpl-save">${isEdit ? 'Simpan' : 'Bikin Template'}</button>
+    </div>
+  `);
+
+  document.getElementById('tpl-save').addEventListener('click', async () => {
+    const name = document.getElementById('tpl-name').value.trim();
+    const title = document.getElementById('tpl-title').value.trim();
+    const desc = document.getElementById('tpl-desc').value.trim();
+    const checklistsRaw = document.getElementById('tpl-checklist').value.trim();
+    const checklists = checklistsRaw ? checklistsRaw.split('\n').map(l => l.trim()).filter(Boolean) : [];
+    if (!name) { toast('Nama template wajib diisi', 'error'); return; }
+    try {
+      const data = { name, title, description: desc, checklists, updatedAt: serverTimestamp() };
+      if (isEdit) {
+        await updateDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', tpl.id), data);
+        toast('Template tersimpan', 'success');
+      } else {
+        data.createdAt = serverTimestamp();
+        await addDoc(collection(STATE.db, 'boards', STATE.currentBoardId, 'templates'), data);
+        toast('Template dibuat', 'success');
+      }
+      closeModal();
+      setTimeout(openTemplatesModal, 200);
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
   });
 }
 
