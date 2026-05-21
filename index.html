@@ -362,6 +362,133 @@
     font-size: 11px;
     font-weight: 600;
   }
+
+  /* === PROGRESS BAR (di kanban card) === */
+  .task-card-progress {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .task-card-progress-track {
+    flex: 1;
+    height: 5px;
+    background: var(--bg-col);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+  .task-card-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width .25s ease-out;
+    border-radius: 100px;
+  }
+  .task-card-progress-fill.done { background: var(--success); }
+  .task-card-progress-fill.in-progress { background: var(--warning); }
+  .task-card-progress-fill.zero { background: var(--text-light); }
+  .task-card-progress-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 32px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* === PROGRESS CONTROL (di modal task) === */
+  .progress-control {
+    background: var(--bg-col);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+  }
+  .progress-control-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .progress-control-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-control-value.done { color: var(--success); }
+  .progress-control-value.in-progress { color: var(--warning); }
+  .progress-control-status-hint {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  input[type="range"].progress-slider {
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 8px;
+    background: white;
+    border-radius: 100px;
+    outline: none;
+    border: 1px solid var(--border);
+    margin: 6px 0;
+  }
+  input[type="range"].progress-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    background: var(--primary);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid white;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }
+  input[type="range"].progress-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    background: var(--primary);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid white;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }
+  input[type="range"].progress-slider:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .progress-quick-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .progress-quick-btn {
+    flex: 1;
+    padding: 6px 8px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .progress-quick-btn:hover:not(:disabled) {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .progress-quick-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+  }
+  .progress-quick-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
   .task-card-title {
     font-size: 13.5px;
     font-weight: 600;
@@ -750,7 +877,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -830,6 +957,31 @@ function canDeleteTask(task) {
   const me = STATE.currentMember;
   if (!me || !task) return false;
   return me.role === 'admin';
+}
+
+// === Progress ↔ Status mapping ===
+// 0% = TODO, 1-99% = PROSES, 100% = DONE
+function progressToStatus(p) {
+  const n = Number(p) || 0;
+  if (n >= 100) return 'done';
+  if (n > 0) return 'proses';
+  return 'todo';
+}
+function statusToProgress(s, currentProgress) {
+  // Saat drag-drop antar kolom — set progress sesuai status tujuan.
+  // Keep existing progress kalau sudah konsisten dengan status target.
+  const cur = Number(currentProgress) || 0;
+  if (s === 'done') return 100;
+  if (s === 'todo') return 0;
+  // proses: kalau current 0 atau 100, set ke 50 (default). Else keep.
+  if (cur === 0 || cur === 100) return 50;
+  return cur;
+}
+function progressFillClass(p) {
+  const n = Number(p) || 0;
+  if (n >= 100) return 'done';
+  if (n > 0) return 'in-progress';
+  return 'zero';
 }
 
 /* =============================================================
@@ -1395,9 +1547,13 @@ function renderKanban() {
     });
   });
 
-  // Add buttons
+  // Add buttons — preset progress sesuai kolom
   root.querySelectorAll('[data-add-status]').forEach(btn => {
-    btn.addEventListener('click', () => openTaskModal(null, { status: btn.dataset.addStatus }));
+    btn.addEventListener('click', () => {
+      const s = btn.dataset.addStatus;
+      const progress = s === 'done' ? 100 : (s === 'proses' ? 50 : 0);
+      openTaskModal(null, { progress });
+    });
   });
 }
 
@@ -1407,10 +1563,18 @@ function renderTaskCard(t) {
   const commentCount = (t.comments || []).length;
   const desc = t.description ? `<div class="task-card-desc">${escapeHtml(t.description)}</div>` : '';
   const locked = !canEditTask(t);
+  const progress = Number(t.progress) || 0;
+  const fillClass = progressFillClass(progress);
   return `
     <div class="task-card col-${t.status || 'todo'} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-title">${escapeHtml(t.title)}</div>
       ${desc}
+      <div class="task-card-progress">
+        <div class="task-card-progress-track">
+          <div class="task-card-progress-fill ${fillClass}" style="width:${progress}%"></div>
+        </div>
+        <span class="task-card-progress-label">${progress}%</span>
+      </div>
       <div class="task-card-meta">
         <span class="task-card-assignee">
           ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
@@ -1443,10 +1607,6 @@ function openTaskModal(taskId = null, presets = {}) {
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
   ).join('');
 
-  const statusOpts = ['todo', 'proses', 'done'].map(s =>
-    `<option value="${s}" ${((task?.status || presets.status || 'todo') === s) ? 'selected' : ''}>${s.toUpperCase()}</option>`
-  ).join('');
-
   // Non-admin can only assign to self (saat create); read-only dipakai untuk edit task orang lain
   const canChangeAssignee = isAdmin && !readOnly;
   const disabledAttr = readOnly ? 'disabled' : '';
@@ -1470,11 +1630,11 @@ function openTaskModal(taskId = null, presets = {}) {
         <label class="label">Deskripsi (opsional)</label>
         <textarea id="t-desc" class="textarea" placeholder="Detail tugas..." ${disabledAttr}>${escapeHtml(task?.description || '')}</textarea>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-        <div class="form-group">
-          <label class="label">Status</label>
-          <select id="t-status" class="select" ${disabledAttr}>${statusOpts}</select>
-        </div>
+      <div class="form-group">
+        ${renderProgressControl(task?.progress ?? presets.progress ?? 0, readOnly)}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
           <label class="label">Pelaksana</label>
           <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
@@ -1504,10 +1664,14 @@ function openTaskModal(taskId = null, presets = {}) {
     return;
   }
 
+  // Bind progress slider — update label/status hint/quick btn active live
+  bindProgressControl();
+
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
     const desc = document.getElementById('t-desc').value.trim();
-    const status = document.getElementById('t-status').value;
+    const progress = Number(document.getElementById('t-progress').value) || 0;
+    const status = progressToStatus(progress);
     const assigneeId = document.getElementById('t-assignee').value;
     const date = document.getElementById('t-date').value;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
@@ -1518,7 +1682,7 @@ function openTaskModal(taskId = null, presets = {}) {
     try {
       if (isEdit) {
         const update = {
-          title, description: desc, status, date,
+          title, description: desc, status, progress, date,
           assigneeId, assigneeName: assignee.name,
           updatedAt: serverTimestamp(),
         };
@@ -1528,7 +1692,7 @@ function openTaskModal(taskId = null, presets = {}) {
         toast('Tugas tersimpan', 'success');
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
-          title, description: desc, status, date,
+          title, description: desc, status, progress, date,
           assigneeId, assigneeName: assignee.name,
           createdById: me.id, createdByName: me.name,
           createdAt: serverTimestamp(),
@@ -1563,6 +1727,55 @@ function openTaskModal(taskId = null, presets = {}) {
     bindCommentForm(task);
     bindCommentDelete(task);
   }
+}
+
+function bindProgressControl() {
+  const slider = document.getElementById('t-progress');
+  const valEl = document.getElementById('t-prog-value');
+  const hintEl = document.getElementById('t-prog-status-hint');
+  if (!slider || !valEl) return;
+
+  function refresh(v) {
+    const n = Number(v) || 0;
+    valEl.textContent = `${n}%`;
+    valEl.className = `progress-control-value ${progressFillClass(n)}`;
+    if (hintEl) hintEl.textContent = `Status auto: ${progressToStatus(n).toUpperCase()}`;
+    // Update quick buttons active state
+    document.querySelectorAll('[data-progress-set]').forEach(btn => {
+      btn.classList.toggle('active', Number(btn.dataset.progressSet) === n);
+    });
+  }
+  slider.addEventListener('input', () => refresh(slider.value));
+  document.querySelectorAll('[data-progress-set]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      slider.value = btn.dataset.progressSet;
+      refresh(slider.value);
+    });
+  });
+}
+
+function renderProgressControl(initialValue, readOnly) {
+  const v = Number(initialValue) || 0;
+  const fillClass = progressFillClass(v);
+  const statusLabel = progressToStatus(v).toUpperCase();
+  return `
+    <div class="progress-control">
+      <div class="progress-control-head">
+        <div>
+          <div class="label" style="margin-bottom:0">Progress</div>
+          <div class="progress-control-status-hint" id="t-prog-status-hint">Status auto: ${statusLabel}</div>
+        </div>
+        <div class="progress-control-value ${fillClass}" id="t-prog-value">${v}%</div>
+      </div>
+      <input type="range" id="t-progress" class="progress-slider" min="0" max="100" step="5" value="${v}" ${readOnly ? 'disabled' : ''}>
+      <div class="progress-quick-row">
+        ${[0, 25, 50, 75, 100].map(p =>
+          `<button type="button" class="progress-quick-btn ${v === p ? 'active' : ''}" data-progress-set="${p}" ${readOnly ? 'disabled' : ''}>${p}%</button>`
+        ).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function renderTaskMetaInfo(task) {
@@ -1678,8 +1891,10 @@ function bindCommentDelete(task) {
 async function updateTaskStatus(taskId, newStatus) {
   const task = STATE.tasks.find(t => t.id === taskId);
   if (!task) return;
+  const newProgress = statusToProgress(newStatus, task.progress);
   const update = {
     status: newStatus,
+    progress: newProgress,
     updatedAt: serverTimestamp(),
   };
   if (newStatus === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
