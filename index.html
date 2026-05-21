@@ -672,6 +672,72 @@
     background: var(--primary-light);
   }
 
+  /* === CATEGORY BADGE === */
+  .category-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    border: 1px solid currentColor;
+    margin-bottom: 8px;
+    background: transparent;
+  }
+  .category-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .category-select {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .category-option {
+    flex: 1;
+    min-width: 110px;
+    padding: 14px 16px;
+    background: white;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-sm);
+    text-align: left;
+    cursor: pointer;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .category-option:hover:not(:disabled) {
+    border-color: currentColor;
+  }
+  .category-option.active {
+    border-color: currentColor;
+    background: var(--bg-col);
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.05);
+  }
+  .category-option-name {
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .category-option-name::before {
+    content: '';
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .category-option-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .category-option:disabled { opacity: 0.6; cursor: not-allowed; }
+
   /* === LABEL CHIPS (di task card & modal) === */
   .label-chip {
     display: inline-flex;
@@ -1459,6 +1525,7 @@ const STATE = {
   selectedDate: todayStr(),
   filterMemberId: null,  // null = semua
   filterLabelIds: [],    // filter task by label (multi)
+  filterCategoryId: null, // null = semua kategori
   unsubTasks: null,
   unsubMembers: null,
   unsubBoards: null,
@@ -1486,7 +1553,23 @@ const PALETTE = [
   { name: 'Abu',    value: '#64748b' },
 ];
 const DEFAULT_BOARD_ID = 'default';
-const DEFAULT_BOARD_NAME = 'Tim B2C';
+const DEFAULT_BOARD_NAME = 'Tim B2C Online & Optimize Process';
+
+// Kategori task (di-set saat create task) — sesuai struktur tim
+const CATEGORIES = [
+  { id: 'b2c',      name: 'B2C',              short: 'B2C', color: '#dc2626' },
+  { id: 'online',   name: 'Online',           short: 'ONL', color: '#2563eb' },
+  { id: 'optimize', name: 'Optimize Process', short: 'OPZ', color: '#c87f1f' },
+];
+
+// Labels default — auto-seed saat first init kalau labels masih kosong
+const DEFAULT_LABELS = [
+  { name: 'Segera',     color: '#dc2626' },
+  { name: 'Harian',     color: '#2563eb' },
+  { name: 'Mingguan',   color: '#c87f1f' },
+  { name: 'Bulanan',    color: '#8b5cf6' },
+  { name: 'Insidental', color: '#64748b' },
+];
 
 // Password gate — ganti hash di bawah kalau mau ganti password.
 // Generate hash baru: echo -n "passwordbaru" | shasum -a 256
@@ -1798,9 +1881,27 @@ function subscribeLabels() {
   if (STATE.unsubLabels) { STATE.unsubLabels(); STATE.unsubLabels = null; }
   if (!STATE.currentBoardId) return;
   const labelsRef = collection(STATE.db, 'boards', STATE.currentBoardId, 'labels');
-  STATE.unsubLabels = onSnapshot(labelsRef, (snap) => {
+  let firstLoad = true;
+  STATE.unsubLabels = onSnapshot(labelsRef, async (snap) => {
     STATE.labels = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+
+    // Auto-seed labels default sekali kalau kosong
+    if (firstLoad && snap.docs.length === 0 && STATE.currentMember?.role === 'admin') {
+      firstLoad = false;
+      try {
+        for (const lbl of DEFAULT_LABELS) {
+          await addDoc(labelsRef, {
+            name: lbl.name, color: lbl.color, createdAt: serverTimestamp(),
+          });
+        }
+        // Listener akan refresh otomatis
+      } catch (err) {
+        console.error('Gagal seed default labels', err);
+      }
+      return;
+    }
+    firstLoad = false;
     renderKanban();
   }, (err) => console.error('Labels listener error', err));
 }
@@ -2143,11 +2244,6 @@ function renderMain() {
             <span class="sidebar-nav-icon">📋</span>Kanban Board
           </button>
           ${isAdmin ? `
-            <button class="sidebar-nav-item" data-nav="boards">
-              <span class="sidebar-nav-icon">📁</span>Data Proyek
-            </button>
-          ` : ''}
-          ${isAdmin ? `
             <button class="sidebar-nav-item" data-nav="members">
               <span class="sidebar-nav-icon">👥</span>Data Pengguna
             </button>
@@ -2202,13 +2298,9 @@ function renderMain() {
           <div class="page-title-row">
             <div>
               <h1 class="page-title">Kanban Board</h1>
-              ${currentBoard ? `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">Board aktif: <strong style="color:var(--text)">${escapeHtml(currentBoard.name)}</strong></div>` : ''}
+              <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Pantau progress tugas tim — B2C · Online · Optimize Process</div>
             </div>
             <div class="page-toolbar">
-              <div class="board-switcher">
-                ${boardChips}
-                ${isAdmin ? `<button class="board-chip board-chip-new" data-nav="boards" title="Kelola boards">+ Board</button>` : ''}
-              </div>
               <button class="btn btn-primary" id="btn-new-task">+ Tugas Baru</button>
             </div>
           </div>
@@ -2222,6 +2314,14 @@ function renderMain() {
                 <button class="date-nav" id="date-next" title="Hari berikutnya">›</button>
                 <button class="date-today-btn" id="date-today">Hari ini</button>
               </div>
+            </div>
+            <div class="filter-divider"></div>
+            <div class="filter-group">
+              <span class="filter-group-label">Kategori</span>
+              <button class="chip ${STATE.filterCategoryId === null ? 'active' : ''}" data-filter-category="">Semua</button>
+              ${CATEGORIES.map(c => `
+                <button class="chip ${STATE.filterCategoryId === c.id ? 'active' : ''}" data-filter-category="${c.id}" style="${STATE.filterCategoryId === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)}</button>
+              `).join('')}
             </div>
             <div class="filter-divider"></div>
             <div class="filter-group">
@@ -2270,6 +2370,14 @@ function renderMain() {
       const idx = STATE.filterLabelIds.indexOf(id);
       if (idx === -1) STATE.filterLabelIds.push(id);
       else STATE.filterLabelIds.splice(idx, 1);
+      renderMain();
+    });
+  });
+  // Category filter
+  document.querySelectorAll('[data-filter-category]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.filterCategory;
+      STATE.filterCategoryId = v === '' ? null : v;
       renderMain();
     });
   });
@@ -2325,6 +2433,7 @@ function renderKanban() {
 
   let filtered = visibleTasks();
   if (STATE.filterMemberId) filtered = filtered.filter(t => t.assigneeId === STATE.filterMemberId);
+  if (STATE.filterCategoryId) filtered = filtered.filter(t => t.category === STATE.filterCategoryId);
   if (STATE.filterLabelIds.length > 0) {
     filtered = filtered.filter(t =>
       (t.labelIds || []).some(lid => STATE.filterLabelIds.includes(lid))
@@ -2443,6 +2552,12 @@ function renderTaskCard(t) {
   const fillClass = progressFillClass(progress);
   const status = t.status || 'todo';
 
+  // Category badge
+  const cat = CATEGORIES.find(c => c.id === t.category);
+  const categoryHtml = cat
+    ? `<span class="category-badge" style="color:${cat.color}">${escapeHtml(cat.name)}</span>`
+    : '';
+
   // Labels
   const taskLabels = (t.labelIds || [])
     .map(id => STATE.labels.find(l => l.id === id))
@@ -2492,6 +2607,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
+        ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
         ${desc}
@@ -2559,6 +2675,7 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialChecklists = task?.checklists ?? presets.checklists ?? [];
   const initialLabelIds = task?.labelIds ?? presets.labelIds ?? [];
   const initialDueDate = task?.dueDate ?? presets.dueDate ?? '';
+  const initialCategory = task?.category ?? presets.category ?? STATE.filterCategoryId ?? '';
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -2578,6 +2695,30 @@ function openTaskModal(taskId = null, presets = {}) {
       </select>
     </div>
   ` : '';
+
+  // Category section (selalu tampil)
+  const catDescriptions = {
+    'b2c': 'Tugas terkait B2C (offline / sales / outlet)',
+    'online': 'Tugas terkait kanal online (Grab/Halo/Shopee/dll)',
+    'optimize': 'Tugas optimasi proses internal / tool',
+  };
+  const categorySection = `
+    <div class="form-group">
+      <label class="label">Kategori Tugas <span style="color:var(--danger)">*</span></label>
+      <div class="category-select" id="t-category-row">
+        ${CATEGORIES.map(c => `
+          <button type="button"
+            class="category-option ${initialCategory === c.id ? 'active' : ''}"
+            data-category="${c.id}"
+            style="color:${c.color}"
+            ${readOnly ? 'disabled' : ''}>
+            <div class="category-option-name">${escapeHtml(c.name)}</div>
+            <div class="category-option-desc">${escapeHtml(catDescriptions[c.id] || '')}</div>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
 
   // Labels section
   const labelsSection = STATE.labels.length > 0 ? `
@@ -2620,6 +2761,7 @@ function openTaskModal(taskId = null, presets = {}) {
         <label class="label">Judul Tugas</label>
         <input id="t-title" class="input" placeholder="Mis: Bikin laporan B2C minggu ini" value="${escapeHtml(initialTitle)}" autocomplete="off" ${disabledAttr}>
       </div>
+      ${categorySection}
       ${labelsSection}
       <div class="form-group">
         <label class="label">Deskripsi (opsional)</label>
@@ -2670,12 +2812,14 @@ function openTaskModal(taskId = null, presets = {}) {
   // Bind progress slider — update label/status hint/quick btn active live
   bindProgressControl();
 
-  // Mutable state untuk modal (labels & checklists)
+  // Mutable state untuk modal (labels, checklists, category)
   const MODAL_STATE = {
     labelIds: [...initialLabelIds],
     checklists: JSON.parse(JSON.stringify(initialChecklists)),
+    category: initialCategory,
   };
 
+  bindCategorySelect(MODAL_STATE);
   bindLabelToggles(MODAL_STATE);
   bindChecklistEditor(MODAL_STATE, readOnly);
   bindTemplatePicker();
@@ -2690,6 +2834,7 @@ function openTaskModal(taskId = null, presets = {}) {
     const dueDate = document.getElementById('t-due').value || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
     if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
+    if (!MODAL_STATE.category) { toast('Pilih kategori tugas (B2C / Online / Optimize)', 'error'); return; }
     const assignee = STATE.members.find(m => m.id === assigneeId);
     if (!assignee) { toast('Pelaksana tidak valid', 'error'); return; }
 
@@ -2707,6 +2852,7 @@ function openTaskModal(taskId = null, presets = {}) {
         const update = {
           title, description: desc, status, progress: finalProgress, date, dueDate,
           assigneeId, assigneeName: assignee.name,
+          category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
           checklists: MODAL_STATE.checklists,
           updatedAt: serverTimestamp(),
@@ -2724,6 +2870,7 @@ function openTaskModal(taskId = null, presets = {}) {
           title, description: desc, status, progress: finalProgress, date, dueDate,
           assigneeId, assigneeName: assignee.name,
           boardId: STATE.currentBoardId,
+          category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
           checklists: MODAL_STATE.checklists,
           createdById: me.id, createdByName: me.name,
@@ -2883,6 +3030,17 @@ function bindChecklistEditor(state, readOnly) {
     });
   }
   attachListeners();
+}
+
+function bindCategorySelect(state) {
+  document.querySelectorAll('[data-category]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      state.category = btn.dataset.category;
+      document.querySelectorAll('[data-category]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
 }
 
 function bindLabelToggles(state) {
