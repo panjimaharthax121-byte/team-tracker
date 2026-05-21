@@ -720,6 +720,11 @@ const LS_KEYS = {
 const PASSWORD_HASH = 'c15888ed9697d91b25c874633375227596db12f1df95ca67d0d5410e7333be82';
 const AUTH_TTL_DAYS = 7;
 
+// Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
+// Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
+// file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
+const EMBEDDED_CONFIG = null;
+
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
   '#06b6d4', '#ef4444', '#84cc16', '#6366f1', '#f97316',
@@ -856,7 +861,7 @@ async function bootstrap() {
     renderPasswordGate();
     return;
   }
-  const cfg = getStoredConfig();
+  const cfg = EMBEDDED_CONFIG || getStoredConfig();
   if (!cfg) {
     renderSetupWizard();
     return;
@@ -1220,6 +1225,7 @@ function renderMain() {
 
         <div class="header-right">
           ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-manage-members">👥 Anggota</button>` : ''}
+          ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btn-share-kit">🔗 Bagikan</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="btn-export">📊 Export</button>
           <div class="user-badge">
             <span class="user-badge-avatar" style="background:${colorFor(me.name)}">${escapeHtml(initials(me.name))}</span>
@@ -1258,6 +1264,7 @@ function renderMain() {
   });
   document.getElementById('btn-new-task').addEventListener('click', () => openTaskModal());
   if (isAdmin) document.getElementById('btn-manage-members').addEventListener('click', openMembersModal);
+  if (isAdmin) document.getElementById('btn-share-kit').addEventListener('click', openShareKitModal);
   document.getElementById('btn-export').addEventListener('click', openExportModal);
   document.getElementById('btn-logout').addEventListener('click', () => {
     localStorage.removeItem(LS_KEYS.CURRENT_MEMBER);
@@ -1711,6 +1718,92 @@ function openMembersModal() {
         toast('Gagal: ' + err.message, 'error');
       }
     });
+  });
+}
+
+/* =============================================================
+   SHARE KIT — generate file dengan config Firebase tertanam
+   ============================================================= */
+function openShareKitModal() {
+  const cfg = getStoredConfig();
+  if (!cfg) { toast('Config Firebase belum di-setup', 'error'); return; }
+
+  const isEmbedded = !!EMBEDDED_CONFIG;
+  const currentUrl = window.location.href.split('?')[0].split('#')[0];
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">🔗 Bagikan ke Tim</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:14px;color:var(--text-muted);font-size:13px">
+        Generate file <code style="background:var(--bg-col);padding:1px 6px;border-radius:4px;font-size:12px">index.html</code>
+        yang sudah punya config Firebase tertanam — supaya Adit & Prayoga tinggal buka URL + password,
+        tanpa perlu paste config Firebase manual.
+      </p>
+
+      ${isEmbedded ? `
+        <div style="background:var(--success-light);color:#065f46;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:13px">
+          ✅ <strong>File ini sudah punya embedded config</strong> — Adit & Prayoga yang buka URL ini
+          langsung masuk tanpa setup wizard.
+        </div>
+      ` : `
+        <div style="background:var(--warning-light);color:#92400e;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:13px">
+          ⚠️ <strong>File yang sedang kamu pakai belum embedded.</strong> Klik tombol di bawah untuk
+          generate file baru yang sudah include config.
+        </div>
+      `}
+
+      <h4 style="font-size:13px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;letter-spacing:0.3px">Langkah Setup Sekali:</h4>
+      <ol style="padding-left:20px;font-size:13px;line-height:1.7;color:var(--text);margin-bottom:18px">
+        <li>Klik <strong>Download index.html</strong> di bawah</li>
+        <li>Buka <a href="https://github.com" target="_blank" style="color:var(--primary)">github.com</a> → repo <code style="background:var(--bg-col);padding:1px 6px;border-radius:4px;font-size:11px">team-tracker</code></li>
+        <li>Klik file <code style="background:var(--bg-col);padding:1px 6px;border-radius:4px;font-size:11px">index.html</code> → ikon pensil (Edit) → atau langsung klik <strong>Add file → Upload files</strong> → drag file baru → <strong>Commit changes</strong> (akan replace yang lama)</li>
+        <li>Tunggu ~1 menit. Setelah itu Adit & Prayoga tinggal akses URL, masukin password, pilih nama mereka.</li>
+      </ol>
+
+      <h4 style="font-size:13px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;letter-spacing:0.3px">Yang Tetap Mereka Butuhkan:</h4>
+      <div class="task-meta-row" style="margin-bottom:0">
+        <div style="display:block;width:100%">
+          <div style="margin-bottom:4px"><strong>URL:</strong> <span style="font-family:ui-monospace,monospace;font-size:12px">${escapeHtml(currentUrl)}</span></div>
+          <div><strong>Password tim:</strong> <span style="font-family:ui-monospace,monospace;font-size:12px">(yang udah kamu set)</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+      <button class="btn btn-primary" id="sk-download">⬇ Download index.html</button>
+    </div>
+  `, { size: 'lg' });
+
+  document.getElementById('sk-download').addEventListener('click', async () => {
+    try {
+      const btn = document.getElementById('sk-download');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loader"></span> Generate...';
+      const res = await fetch(window.location.href);
+      if (!res.ok) throw new Error('Gagal fetch source: HTTP ' + res.status);
+      let html = await res.text();
+      const cfgJson = JSON.stringify(cfg);
+      // Replace baris EMBEDDED_CONFIG. Format: `const EMBEDDED_CONFIG = ...;`
+      const re = /const\s+EMBEDDED_CONFIG\s*=\s*[^;]+;/;
+      if (!re.test(html)) {
+        toast('Template EMBEDDED_CONFIG tidak ketemu di source — coba update file lokal dulu', 'error');
+        btn.disabled = false;
+        btn.textContent = '⬇ Download index.html';
+        return;
+      }
+      html = html.replace(re, `const EMBEDDED_CONFIG = ${cfgJson};`);
+      downloadFile('index.html', html, 'text/html');
+      toast('File ke-download — upload ulang ke GitHub Pages', 'success');
+      btn.disabled = false;
+      btn.textContent = '⬇ Download index.html';
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+      const btn = document.getElementById('sk-download');
+      if (btn) { btn.disabled = false; btn.textContent = '⬇ Download index.html'; }
+    }
   });
 }
 
