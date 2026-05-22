@@ -926,6 +926,158 @@
     margin-bottom: 6px;
   }
 
+  /* === PROJECT PAGE (menu Tugas Proyek tersendiri) === */
+  .project-list { display: flex; flex-direction: column; gap: 14px; }
+  .project-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    cursor: pointer;
+    transition: all .15s;
+    border-left: 4px solid #8b5cf6;
+  }
+  .project-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .project-card.status-done { border-left-color: var(--success); opacity: 0.85; }
+  .project-card.status-proses { border-left-color: var(--warning); }
+  .project-card.overdue { border-left-color: var(--danger); background: #fef2f2; }
+  .project-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .project-card-title {
+    font-family: var(--font-serif);
+    font-size: 19px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--text);
+  }
+  .project-card-meta-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .project-card-meta-bot {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .project-card-meta-bot strong { color: var(--text); }
+  .project-timeline {
+    margin-top: 14px;
+    position: relative;
+    height: 28px;
+    background: var(--bg-col);
+    border-radius: 6px;
+    overflow: visible;
+  }
+  .project-timeline-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, #ddd6fe 0%, #c4b5fd 100%);
+    border-radius: 6px;
+  }
+  .project-timeline-bar.proses {
+    background: linear-gradient(90deg, #fde68a 0%, #f59e0b 100%);
+  }
+  .project-timeline-bar.done {
+    background: linear-gradient(90deg, #bbf7d0 0%, var(--success) 100%);
+  }
+  .project-timeline-bar.overdue {
+    background: linear-gradient(90deg, #fecaca 0%, var(--danger) 100%);
+  }
+  .project-timeline-progress {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: rgba(0,0,0,0.18);
+    border-radius: 6px 0 0 6px;
+  }
+  .project-timeline-today {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--primary);
+    z-index: 2;
+  }
+  .project-timeline-today::before {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--primary);
+  }
+  .project-timeline-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-family: var(--font-mono);
+  }
+  .project-days-left {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    padding: 4px 11px;
+    border-radius: 100px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .project-days-left.fine { background: #ede9fe; color: #6b21a8; }
+  .project-days-left.warn { background: var(--warning-light); color: #92400e; }
+  .project-days-left.overdue { background: var(--danger-light); color: #991b1b; }
+  .project-days-left.done { background: var(--success-light); color: #15803d; }
+  .project-empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-light);
+  }
+  .project-empty-icon {
+    font-size: 56px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+  }
+  .project-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 100px;
+    background: var(--bg-col);
+    border: 1px solid transparent;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .project-filter-pill:hover { background: #e8e8e8; }
+  .project-filter-pill.active {
+    background: #ede9fe;
+    color: #6b21a8;
+    border-color: #c4b5fd;
+    font-weight: 700;
+  }
+
   /* === PROJECT BADGE === */
   .project-badge {
     display: inline-flex;
@@ -2066,7 +2218,8 @@ const STATE = {
   filterTimeRange: null,  // null=semua | 'pagi'|'siang'|'sore'|'malam'|'no-time'
   filterFrequency: null,  // null=semua | 'manual'|'daily'|'weekly'|'monthly'
   notifSettings: null,    // di-init dari localStorage
-  currentView: 'kanban', // 'kanban' | 'recap' | 'calendar'
+  currentView: 'kanban', // 'kanban' | 'recap' | 'calendar' | 'project'
+  projectFilter: 'active', // 'active' (TODO/PROSES) | 'done' | 'all'
   calendarMonth: null,   // 'YYYY-MM' (null = bulan ini)
   recapFilters: {
     from: '',         // range tanggal dari
@@ -2434,21 +2587,30 @@ function checkRemindersTick() {
   }
 
   // 2. Start time reminder
+  // FIX v2.17: untuk task proyek, trigger di tiap hari range (today in [start..end])
   if (s.notifyOnStartTime) {
-    const startingTasks = STATE.tasks.filter(t =>
-      (t.assigneeId === me.id || t.isShared) &&
-      t.startTime === currentTime &&
-      t.date === today &&
-      t.status !== 'done' &&
-      ((t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId)
-    );
+    const startingTasks = STATE.tasks.filter(t => {
+      if (!(t.assigneeId === me.id || t.isShared)) return false;
+      if (t.startTime !== currentTime) return false;
+      if (t.status === 'done') return false;
+      if (t.isDeleted === true) return false;
+      if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
+      if (t.isProject) {
+        // Project: today harus dalam range [start..end]
+        const start = t.date;
+        const end = t.dueDate || t.date;
+        return today >= start && today <= end;
+      }
+      return t.date === today;
+    });
     for (const task of startingTasks) {
       const key = `team_tracker.lastStartNotif.${task.id}.${today}`;
       if (localStorage.getItem(key)) continue;
       const taskId = task.id;
+      const titleSuffix = task.isProject ? ' (proyek)' : '';
       showNotif(
         '⏰ Waktunya Mulai!',
-        `"${task.title}" — jadwal mulai jam ${task.startTime}`,
+        `"${task.title}"${titleSuffix} — jadwal mulai jam ${task.startTime}`,
         {
           tag: `start-${task.id}`,
           type: 'start',
@@ -2775,11 +2937,16 @@ function subscribeTemplates() {
   if (STATE.unsubTemplates) { STATE.unsubTemplates(); STATE.unsubTemplates = null; }
   if (!STATE.currentBoardId) return;
   const tplRef = collection(STATE.db, 'boards', STATE.currentBoardId, 'templates');
+  let tplFirstSnap = true;
   STATE.unsubTemplates = onSnapshot(tplRef, (snap) => {
     STATE.templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
-    // FIX BUG: Re-render kanban view supaya "Pakai Template" dropdown di task modal terbaru
-    // (kalau view=recap/calendar, gak perlu re-render — task modal akan re-read STATE.templates saat dibuka)
+    // FIX v2.17: Mark templates ready supaya recurring generator tahu boleh jalan
+    if (tplFirstSnap) {
+      tplFirstSnap = false;
+      tryEnsureRecurring('templates');
+    }
+    // Re-render kanban view supaya "Pakai Template" dropdown di task modal terbaru
     if (STATE.currentMember && STATE.boards.length > 0 && STATE.currentView === 'kanban') {
       renderMain();
     }
@@ -2837,11 +3004,14 @@ function visibleTasks() {
 
     // Tugas Proyek (multi-hari range)
     if (t.isProject) {
+      // FIX v2.17: kalau DONE, hide dari kanban (gak ngeganggu range hari berikutnya).
+      // Project selesai bisa dilihat di menu 📌 Tugas Proyek (filter Selesai).
+      if (t.status === 'done') return false;
       const start = t.date;
       const end = t.dueDate || t.date;
       if (sel >= start && sel <= end) return true;
       // Overdue & belum done — tetap muncul di hari ini sebagai reminder
-      if (isToday && sel > end && t.status !== 'done') return true;
+      if (isToday && sel > end) return true;
       return false;
     }
 
@@ -2877,16 +3047,30 @@ function subscribeTasks() {
     renderKanban();
     renderRecapTable();
     renderCalendarGrid();
+    renderProjectList();
 
-    // Setelah snapshot pertama, trigger auto-generate recurring tasks
+    // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
       firstSnap = false;
-      try { await ensureRecurringTasksForToday(); } catch (err) { console.error('Auto-generate gagal', err); }
+      tryEnsureRecurring('tasks');
     }
   }, (err) => {
     console.error('Tasks listener error', err);
     toast('Gagal load tugas: ' + err.message, 'error');
   });
+}
+
+// FIX v2.17: Gating ensure — pastikan tasks & templates dua-duanya udah loaded
+// supaya tidak race (templates belum ready saat firstSnap tasks fire).
+const _ensureFlags = { tasksReady: false, templatesReady: false, fired: false };
+async function tryEnsureRecurring(setFlag) {
+  if (setFlag === 'tasks') _ensureFlags.tasksReady = true;
+  else if (setFlag === 'templates') _ensureFlags.templatesReady = true;
+  else { _ensureFlags.tasksReady = true; }
+  if (_ensureFlags.fired) return;
+  if (!_ensureFlags.tasksReady || !_ensureFlags.templatesReady) return;
+  _ensureFlags.fired = true;
+  try { await ensureRecurringTasksForToday(); } catch (err) { console.error('Auto-generate gagal', err); }
 }
 
 // === RECURRING TASKS GENERATOR ===
@@ -3346,8 +3530,20 @@ function getFilteredRecapTasks() {
   const rf = STATE.recapFilters;
   let tasks = STATE.tasks.filter(t =>
     (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId && t.isDeleted !== true);
-  if (rf.from) tasks = tasks.filter(t => (t.date || '') >= rf.from);
-  if (rf.to) tasks = tasks.filter(t => (t.date || '') <= rf.to);
+  // FIX v2.17: untuk task proyek, pakai overlap range bukan strict t.date in [from,to]
+  if (rf.from) tasks = tasks.filter(t => {
+    if (t.isProject) {
+      const end = t.dueDate || t.date || '';
+      return end >= rf.from; // project end >= filter from
+    }
+    return (t.date || '') >= rf.from;
+  });
+  if (rf.to) tasks = tasks.filter(t => {
+    if (t.isProject) {
+      return (t.date || '') <= rf.to; // project start <= filter to
+    }
+    return (t.date || '') <= rf.to;
+  });
   if (rf.status === 'unfinished') tasks = tasks.filter(t => t.status !== 'done');
   else if (rf.status !== 'all') tasks = tasks.filter(t => t.status === rf.status);
   if (rf.memberId) tasks = tasks.filter(t => t.assigneeId === rf.memberId);
@@ -3581,6 +3777,185 @@ function renderRecapTable() {
       renderRecapTable();
     });
   });
+}
+
+/* =============================================================
+   PROJECT PAGE (menu Tugas Proyek)
+   ============================================================= */
+function renderProjectPageHtml() {
+  const filter = STATE.projectFilter || 'active';
+  const counts = (() => {
+    const all = STATE.tasks.filter(t =>
+      t.isProject === true
+      && (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+      && t.isDeleted !== true);
+    return {
+      all: all.length,
+      active: all.filter(t => t.status !== 'done').length,
+      done: all.filter(t => t.status === 'done').length,
+    };
+  })();
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">Tugas Proyek</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Proyek multi-hari — auto-sync ke Kanban & Kalender</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-primary" id="btn-new-project">+ Proyek Baru</button>
+      </div>
+    </div>
+
+    <div class="filter-strip">
+      <div class="filter-group">
+        <span class="filter-group-label">Status</span>
+        <button type="button" class="project-filter-pill ${filter === 'active' ? 'active' : ''}" data-project-filter="active">
+          Aktif (${counts.active})
+        </button>
+        <button type="button" class="project-filter-pill ${filter === 'done' ? 'active' : ''}" data-project-filter="done">
+          Selesai (${counts.done})
+        </button>
+        <button type="button" class="project-filter-pill ${filter === 'all' ? 'active' : ''}" data-project-filter="all">
+          Semua (${counts.all})
+        </button>
+      </div>
+    </div>
+
+    <div id="project-list-root"></div>
+  `;
+}
+
+function renderProjectList() {
+  const root = document.getElementById('project-list-root');
+  if (!root) return;
+
+  const filter = STATE.projectFilter || 'active';
+  let projects = STATE.tasks.filter(t =>
+    t.isProject === true
+    && (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+    && t.isDeleted !== true
+  );
+  if (filter === 'active') projects = projects.filter(t => t.status !== 'done');
+  else if (filter === 'done') projects = projects.filter(t => t.status === 'done');
+
+  // Sort: status active (todo/proses) dulu, lalu by date asc (project starting soonest first)
+  projects.sort((a, b) => {
+    const aActive = a.status !== 'done' ? 0 : 1;
+    const bActive = b.status !== 'done' ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    return (a.date || '').localeCompare(b.date || '');
+  });
+
+  if (projects.length === 0) {
+    root.innerHTML = `
+      <div class="project-empty">
+        <div class="project-empty-icon">📌</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Belum ada proyek ${filter === 'active' ? 'aktif' : (filter === 'done' ? 'selesai' : '')}</div>
+        <div style="font-size:13px;margin-bottom:18px">Bikin proyek baru untuk tugas yang berlangsung mingguan atau bulanan</div>
+        <button class="btn btn-primary" data-new-project-empty>+ Bikin Proyek Pertama</button>
+      </div>
+    `;
+    const emptyBtn = root.querySelector('[data-new-project-empty]');
+    if (emptyBtn) emptyBtn.addEventListener('click', () => openTaskModal(null, { isProject: true }));
+    return;
+  }
+
+  const today = todayStr();
+  const monthsId = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const fmtDate = (dateStr) => {
+    if (!dateStr) return '—';
+    const [, m, d] = dateStr.split('-');
+    return `${parseInt(d)} ${monthsId[parseInt(m)-1]}`;
+  };
+  const cardsHtml = projects.map(t => {
+    const start = t.date;
+    const end = t.dueDate || t.date;
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const assignee = STATE.members.find(m => m.id === t.assigneeId);
+    const labels = (t.labelIds || [])
+      .map(id => STATE.labels.find(l => l.id === id))
+      .filter(Boolean);
+    const checklistInfo = computeChecklistTotal(t);
+
+    // Days calculation
+    const todayDt = new Date(today + 'T00:00:00');
+    const startDt = new Date(start + 'T00:00:00');
+    const endDt = new Date(end + 'T00:00:00');
+    const totalDays = Math.round((endDt - startDt) / 86400000) + 1;
+    const elapsedDays = Math.max(0, Math.min(totalDays, Math.round((todayDt - startDt) / 86400000) + 1));
+    const daysLeft = Math.round((endDt - todayDt) / 86400000);
+    const isOverdue = daysLeft < 0 && t.status !== 'done';
+    const isDone = t.status === 'done';
+    const isProses = t.status === 'proses';
+
+    // Timeline bar — selalu full width (representasi 100% duration)
+    const elapsedPct = totalDays > 0 ? Math.min(100, (elapsedDays / totalDays) * 100) : 100;
+    const progressPct = Number(t.progress) || 0;
+    // Today indicator position (% within bar)
+    let todayPos = elapsedPct;
+    if (todayDt < startDt) todayPos = 0;
+    else if (todayDt > endDt) todayPos = 100;
+
+    const barClass = isDone ? 'done' : (isOverdue ? 'overdue' : (isProses ? 'proses' : ''));
+    const cardClass = isDone ? 'status-done' : (isOverdue ? 'overdue' : (isProses ? 'status-proses' : ''));
+    const daysLeftClass = isDone ? 'done' : (isOverdue ? 'overdue' : (daysLeft <= 1 ? 'warn' : 'fine'));
+    const daysLeftTxt = isDone ? '✓ Selesai'
+      : isOverdue ? `⚠️ lewat ${Math.abs(daysLeft)} hari`
+      : daysLeft === 0 ? 'Deadline hari ini!'
+      : daysLeft === 1 ? '1 hari lagi'
+      : `${daysLeft} hari lagi`;
+
+    return `
+      <div class="project-card ${cardClass}" data-project-task="${t.id}">
+        <div class="project-card-head">
+          <div style="flex:1;min-width:0">
+            <div class="project-card-meta-top">
+              ${cat ? `<span class="category-badge" style="color:${cat.color};margin:0">${escapeHtml(cat.name)}</span>` : ''}
+              ${t.isShared ? '<span class="shared-badge" style="margin:0">👥 Bersama</span>' : ''}
+              ${labels.map(l => `<span class="label-chip" style="background:${l.color}">${escapeHtml(l.name)}</span>`).join('')}
+            </div>
+            <div class="project-card-title">${escapeHtml(t.title || '')}</div>
+            ${t.description ? `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(t.description.slice(0, 120))}${t.description.length > 120 ? '…' : ''}</div>` : ''}
+          </div>
+          <div class="project-days-left ${daysLeftClass}">${daysLeftTxt}</div>
+        </div>
+
+        <div class="project-timeline">
+          <div class="project-timeline-bar ${barClass}" style="left:0;right:0"></div>
+          <div class="project-timeline-progress" style="width:${progressPct}%"></div>
+          ${todayDt >= startDt && todayDt <= endDt ? `<div class="project-timeline-today" style="left:${todayPos}%" title="Hari ini"></div>` : ''}
+        </div>
+        <div class="project-timeline-labels">
+          <span>${fmtDate(start)}</span>
+          <span style="color:var(--text);font-weight:600">Progress: ${progressPct}%</span>
+          <span>${fmtDate(end)}</span>
+        </div>
+
+        <div class="project-card-meta-bot">
+          <span>${avatarHtml(assignee?.name || t.assigneeName || '?')} <strong>${escapeHtml(assignee?.name || t.assigneeName || '?')}</strong></span>
+          <span>📆 <strong>${totalDays} hari</strong> total · ${elapsedDays}/${totalDays} hari berlalu</span>
+          ${checklistInfo.total > 0 ? `<span>☑️ ${checklistInfo.done}/${checklistInfo.total} checklist</span>` : ''}
+          ${(t.comments || []).length > 0 ? `<span>💬 ${(t.comments || []).length} comment</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  root.innerHTML = `<div class="project-list">${cardsHtml}</div>`;
+  root.querySelectorAll('[data-project-task]').forEach(card => {
+    card.addEventListener('click', () => openTaskModal(card.dataset.projectTask));
+  });
+}
+
+function bindProjectPage() {
+  document.querySelectorAll('[data-project-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      STATE.projectFilter = btn.dataset.projectFilter;
+      renderMain();
+    });
+  });
+  const newBtn = document.getElementById('btn-new-project');
+  if (newBtn) newBtn.addEventListener('click', () => openTaskModal(null, { isProject: true }));
 }
 
 function getActiveCalendarMonth() {
@@ -3867,6 +4242,9 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'calendar' ? 'active' : ''}" data-nav="calendar">
             <span class="sidebar-nav-icon">📅</span>Kalender Tugas
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'project' ? 'active' : ''}" data-nav="project">
+            <span class="sidebar-nav-icon">📌</span>Tugas Proyek
+          </button>
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
           </button>
@@ -3922,7 +4300,9 @@ function renderMain() {
             ? renderRecapPageHtml()
             : (STATE.currentView === 'calendar'
               ? renderCalendarPageHtml()
-              : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))}
+              : (STATE.currentView === 'project'
+                ? renderProjectPageHtml()
+                : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))}
         </div>
       </main>
     </div>
@@ -4005,7 +4385,7 @@ function renderMain() {
       closeSidebarMobile();
       const target = btn.dataset.nav;
       // View switches
-      if (target === 'kanban' || target === 'recap' || target === 'calendar') {
+      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -4034,6 +4414,11 @@ function renderMain() {
   if (STATE.currentView === 'calendar') {
     bindCalendarNav();
     renderCalendarGrid();
+  }
+  // Project view bindings
+  if (STATE.currentView === 'project') {
+    bindProjectPage();
+    renderProjectList();
   }
 
   // Logout
@@ -5294,10 +5679,16 @@ function bindCommentForm(task) {
       // Re-render comments via state refresh — listener will update
       // But also update local task for immediate UX
       task.comments = [...(task.comments || []), newComment];
+      // FIX v2.17: pakai DOM API + temp div, tidak regex (anti-crash kalau structure berubah)
       const list = document.getElementById('comments-list');
       if (list) {
-        list.outerHTML = renderCommentsSection(task).match(/<div id="comments-list">[\s\S]*?<\/div>(?=\s*<div class="comment-form")/)[0];
-        bindCommentDelete(task);
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderCommentsSection(task);
+        const newList = tmp.querySelector('#comments-list');
+        if (newList) {
+          list.replaceWith(newList);
+          bindCommentDelete(task);
+        }
       }
     } catch (err) {
       toast('Gagal kirim: ' + err.message, 'error');
