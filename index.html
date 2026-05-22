@@ -926,6 +926,109 @@
     margin-bottom: 6px;
   }
 
+  /* === FREQUENCY BADGE (task dari template recurring) === */
+  .freq-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    margin-right: 4px;
+  }
+  .freq-badge.daily   { background: #fde8e8; color: #b91c1c; }
+  .freq-badge.weekly  { background: #dbeafe; color: #1d4ed8; }
+  .freq-badge.monthly { background: #fef3c7; color: #92400e; }
+
+  /* === TARGET COUNTER === */
+  .target-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: var(--info-light);
+    color: var(--info);
+    font-family: var(--font-mono);
+  }
+  .target-badge.done { background: var(--success-light); color: #15803d; }
+  .target-control {
+    background: var(--bg-col);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+  }
+  .target-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .target-row > label {
+    flex: 1;
+    min-width: 160px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .target-row > label small {
+    display: block;
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .target-input-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+  }
+  .target-input-group input {
+    width: 70px;
+    border: none;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 700;
+    padding: 4px;
+    background: transparent;
+  }
+  .target-input-group input:focus { outline: none; }
+  .target-step-btn {
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-col);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    transition: background .1s;
+  }
+  .target-step-btn:hover:not(:disabled) { background: var(--border-strong); }
+  .target-step-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .target-display {
+    flex: 0 0 auto;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--info);
+    padding: 8px 18px;
+    background: var(--info-light);
+    border-radius: var(--radius-sm);
+    min-width: 110px;
+  }
+  .target-display.done { color: var(--success); background: var(--success-light); }
+
   /* === CATEGORY BADGE === */
   .category-badge {
     display: inline-flex;
@@ -1845,7 +1948,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -3475,6 +3578,25 @@ function renderTaskCard(t) {
     return `<span class="carryover-badge">⏪ Carry-over dari ${d}/${m}</span>`;
   })() : '';
 
+  // Frequency badge — kalau task ter-generate dari template recurring
+  let freqHtml = '';
+  if (t.fromTemplateId) {
+    // Cari template original untuk dapat frequency
+    const tpl = STATE.templates.find(tp => tp.id === t.fromTemplateId);
+    const freq = tpl?.frequency;
+    const freqMap = {
+      daily:   { cls: 'daily',   txt: '🗓️ Harian' },
+      weekly:  { cls: 'weekly',  txt: '📆 Mingguan' },
+      monthly: { cls: 'monthly', txt: '📅 Bulanan' },
+    };
+    if (freq && freqMap[freq]) {
+      const fm = freqMap[freq];
+      freqHtml = `<span class="freq-badge ${fm.cls}" title="Dari template: ${escapeHtml(t.fromTemplateName || tpl.name)}">${fm.txt}</span>`;
+    } else if (t.fromTemplateName) {
+      freqHtml = `<span class="freq-badge daily" title="Dari template: ${escapeHtml(t.fromTemplateName)}">📋 ${escapeHtml(t.fromTemplateName)}</span>`;
+    }
+  }
+
   // Labels
   const taskLabels = (t.labelIds || [])
     .map(id => STATE.labels.find(l => l.id === id))
@@ -3492,6 +3614,13 @@ function renderTaskCard(t) {
   const checklistInfo = computeChecklistTotal(t);
   const checklistBadge = checklistInfo.total > 0
     ? `<span title="${checklistInfo.done} dari ${checklistInfo.total} checklist selesai">☑️ ${checklistInfo.done}/${checklistInfo.total}</span>`
+    : '';
+
+  // Target counter badge — kalau task pakai mode target/counter
+  const targetVal = Number(t.target) || 0;
+  const progressCount = Number(t.progressCount) || 0;
+  const targetBadge = targetVal > 0
+    ? `<span class="target-badge ${progressCount >= targetVal ? 'done' : ''}" title="Terlaksana ${progressCount} dari target ${targetVal}">🎯 ${progressCount}/${targetVal}</span>`
     : '';
 
   // Action buttons (conditional by status & permission)
@@ -3524,7 +3653,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
-        ${carryoverHtml}
+        ${carryoverHtml}${freqHtml}
         ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
@@ -3540,6 +3669,7 @@ function renderTaskCard(t) {
             ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
           </span>
           ${dueBadge}
+          ${targetBadge}
           ${checklistBadge}
           ${commentCount ? `<span class="task-card-comments-badge">💬 ${commentCount}</span>` : ''}
           <button class="task-card-history-btn" data-stop data-history="${t.id}" title="Riwayat Pengerjaan">🕐</button>
@@ -3594,6 +3724,8 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialLabelIds = task?.labelIds ?? presets.labelIds ?? [];
   const initialDueDate = task?.dueDate ?? presets.dueDate ?? '';
   const initialCategory = task?.category ?? presets.category ?? STATE.filterCategoryId ?? '';
+  const initialTarget = Number(task?.target) || 0;
+  const initialProgressCount = Number(task?.progressCount) || 0;
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -3686,7 +3818,7 @@ function openTaskModal(taskId = null, presets = {}) {
         <textarea id="t-desc" class="textarea" placeholder="Detail tugas..." ${disabledAttr}>${escapeHtml(initialDesc)}</textarea>
       </div>
       <div class="form-group">
-        ${renderProgressControl(task?.progress ?? presets.progress ?? 0, readOnly)}
+        ${renderProgressControl(task?.progress ?? presets.progress ?? 0, initialTarget, initialProgressCount, readOnly)}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -3727,15 +3859,17 @@ function openTaskModal(taskId = null, presets = {}) {
     return;
   }
 
-  // Bind progress slider — update label/status hint/quick btn active live
-  bindProgressControl();
-
-  // Mutable state untuk modal (labels, checklists, category)
+  // Mutable state untuk modal (labels, checklists, category, target/counter)
   const MODAL_STATE = {
     labelIds: [...initialLabelIds],
     checklists: JSON.parse(JSON.stringify(initialChecklists)),
     category: initialCategory,
+    target: initialTarget,
+    progressCount: initialProgressCount,
   };
+
+  // Bind progress + target counter (slider/counter switch berdasarkan target value)
+  bindProgressControl(MODAL_STATE, readOnly);
 
   bindCategorySelect(MODAL_STATE);
   bindLabelToggles(MODAL_STATE);
@@ -3745,7 +3879,14 @@ function openTaskModal(taskId = null, presets = {}) {
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
     const desc = document.getElementById('t-desc').value.trim();
-    const progress = Number(document.getElementById('t-progress').value) || 0;
+    const sliderEl = document.getElementById('t-progress');
+    const sliderProgress = sliderEl ? (Number(sliderEl.value) || 0) : 0;
+    const target = Number(MODAL_STATE.target) || 0;
+    const progressCount = Number(MODAL_STATE.progressCount) || 0;
+    // Kalau target > 0, derive progress dari counter; else pakai slider
+    let progress = target > 0
+      ? Math.min(100, Math.round(progressCount * 100 / target))
+      : sliderProgress;
     let status = progressToStatus(progress);
     const assigneeId = document.getElementById('t-assignee').value;
     const date = document.getElementById('t-date').value;
@@ -3756,10 +3897,10 @@ function openTaskModal(taskId = null, presets = {}) {
     const assignee = STATE.members.find(m => m.id === assigneeId);
     if (!assignee) { toast('Pelaksana tidak valid', 'error'); return; }
 
-    // Auto-sync progress kalau ada checklist
+    // Auto-sync progress kalau ada checklist (hanya kalau gak pakai target)
     const cInfo = computeChecklistTotalArr(MODAL_STATE.checklists);
     let finalProgress = progress;
-    if (cInfo.total > 0 && (cInfo.done === cInfo.total) && progress < 100) {
+    if (target === 0 && cInfo.total > 0 && (cInfo.done === cInfo.total) && progress < 100) {
       // Semua checklist done → set progress 100 kalau user belum naikin
       finalProgress = 100;
       status = 'done';
@@ -3769,6 +3910,7 @@ function openTaskModal(taskId = null, presets = {}) {
       if (isEdit) {
         const update = {
           title, description: desc, status, progress: finalProgress, date, dueDate,
+          target, progressCount,
           assigneeId, assigneeName: assignee.name,
           category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
@@ -3786,6 +3928,7 @@ function openTaskModal(taskId = null, presets = {}) {
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
           title, description: desc, status, progress: finalProgress, date, dueDate,
+          target, progressCount,
           assigneeId, assigneeName: assignee.name,
           boardId: STATE.currentBoardId,
           category: MODAL_STATE.category,
@@ -4066,50 +4209,165 @@ function renderActivitySection(task) {
   `;
 }
 
-function bindProgressControl() {
+function bindProgressControl(modalState, readOnly) {
   const slider = document.getElementById('t-progress');
   const valEl = document.getElementById('t-prog-value');
   const hintEl = document.getElementById('t-prog-status-hint');
-  if (!slider || !valEl) return;
+  const targetInput = document.getElementById('t-target');
+  const countInput = document.getElementById('t-progress-count');
+  const targetMinus = document.getElementById('t-target-minus');
+  const targetPlus = document.getElementById('t-target-plus');
+  const targetDisplay = document.getElementById('t-target-display');
 
-  function refresh(v) {
-    const n = Number(v) || 0;
-    valEl.textContent = `${n}%`;
-    valEl.className = `progress-control-value ${progressFillClass(n)}`;
-    if (hintEl) hintEl.textContent = `Status auto: ${progressToStatus(n).toUpperCase()}`;
-    // Update quick buttons active state
-    document.querySelectorAll('[data-progress-set]').forEach(btn => {
-      btn.classList.toggle('active', Number(btn.dataset.progressSet) === n);
-    });
+  function computeProgressFromCount() {
+    const target = Number(modalState.target) || 0;
+    const count = Number(modalState.progressCount) || 0;
+    if (target <= 0) return null;
+    const pct = Math.min(100, Math.round(count * 100 / target));
+    return pct;
   }
-  slider.addEventListener('input', () => refresh(slider.value));
+
+  function refreshDisplay() {
+    const target = Number(modalState.target) || 0;
+    const count = Number(modalState.progressCount) || 0;
+    const useCounter = target > 0;
+    const pct = useCounter ? computeProgressFromCount() : (slider ? Number(slider.value) || 0 : 0);
+
+    if (valEl) {
+      valEl.textContent = `${pct}%`;
+      valEl.className = `progress-control-value ${progressFillClass(pct)}`;
+    }
+    if (hintEl) {
+      hintEl.textContent = useCounter
+        ? `${count} / ${target} tercapai · status auto: ${progressToStatus(pct).toUpperCase()}`
+        : `Status auto: ${progressToStatus(pct).toUpperCase()}`;
+    }
+    // Sync slider visibility based on target mode
+    const sliderWrap = document.getElementById('t-slider-wrap');
+    const counterWrap = document.getElementById('t-counter-wrap');
+    if (sliderWrap) sliderWrap.style.display = useCounter ? 'none' : 'block';
+    if (counterWrap) counterWrap.style.display = useCounter ? 'flex' : 'none';
+    // Display target counter value
+    if (targetDisplay) {
+      targetDisplay.textContent = `${count} / ${target || '∞'}`;
+      targetDisplay.classList.toggle('done', count >= target && target > 0);
+    }
+    // Update quick buttons (slider mode only)
+    if (!useCounter) {
+      document.querySelectorAll('[data-progress-set]').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.progressSet) === pct);
+      });
+    }
+    // Disable +/- kalau read-only or limit reached
+    if (targetMinus) targetMinus.disabled = readOnly || count <= 0;
+    if (targetPlus) targetPlus.disabled = readOnly || (target > 0 && count >= target);
+  }
+
+  if (slider) slider.addEventListener('input', () => refreshDisplay());
   document.querySelectorAll('[data-progress-set]').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.disabled) return;
-      slider.value = btn.dataset.progressSet;
-      refresh(slider.value);
+      if (slider) slider.value = btn.dataset.progressSet;
+      refreshDisplay();
     });
   });
+
+  if (targetInput) {
+    targetInput.addEventListener('input', () => {
+      let v = parseInt(targetInput.value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      modalState.target = v;
+      // Kalau target dikurangi di bawah progressCount, clamp progressCount
+      if (v > 0 && modalState.progressCount > v) modalState.progressCount = v;
+      if (countInput) countInput.value = modalState.progressCount;
+      if (countInput) countInput.max = v || '';
+      refreshDisplay();
+    });
+  }
+  if (countInput) {
+    countInput.addEventListener('input', () => {
+      let v = parseInt(countInput.value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      const target = Number(modalState.target) || 0;
+      if (target > 0 && v > target) v = target;
+      modalState.progressCount = v;
+      refreshDisplay();
+    });
+  }
+  if (targetMinus) {
+    targetMinus.addEventListener('click', () => {
+      if (readOnly) return;
+      modalState.progressCount = Math.max(0, (Number(modalState.progressCount) || 0) - 1);
+      if (countInput) countInput.value = modalState.progressCount;
+      refreshDisplay();
+    });
+  }
+  if (targetPlus) {
+    targetPlus.addEventListener('click', () => {
+      if (readOnly) return;
+      const target = Number(modalState.target) || 0;
+      let next = (Number(modalState.progressCount) || 0) + 1;
+      if (target > 0 && next > target) next = target;
+      modalState.progressCount = next;
+      if (countInput) countInput.value = modalState.progressCount;
+      refreshDisplay();
+    });
+  }
+
+  refreshDisplay();
 }
 
-function renderProgressControl(initialValue, readOnly) {
-  const v = Number(initialValue) || 0;
-  const fillClass = progressFillClass(v);
-  const statusLabel = progressToStatus(v).toUpperCase();
+function renderProgressControl(initialProgress, initialTarget, initialCount, readOnly) {
+  const p = Number(initialProgress) || 0;
+  const target = Number(initialTarget) || 0;
+  const count = Number(initialCount) || 0;
+  const useCounter = target > 0;
+  const displayPct = useCounter ? Math.min(100, target > 0 ? Math.round(count * 100 / target) : 0) : p;
+  const fillClass = progressFillClass(displayPct);
+  const statusLabel = progressToStatus(displayPct).toUpperCase();
+
   return `
     <div class="progress-control">
       <div class="progress-control-head">
         <div>
           <div class="label" style="margin-bottom:0">Progress</div>
-          <div class="progress-control-status-hint" id="t-prog-status-hint">Status auto: ${statusLabel}</div>
+          <div class="progress-control-status-hint" id="t-prog-status-hint">
+            ${useCounter ? `${count} / ${target} tercapai · ` : ''}Status auto: ${statusLabel}
+          </div>
         </div>
-        <div class="progress-control-value ${fillClass}" id="t-prog-value">${v}%</div>
+        <div class="progress-control-value ${fillClass}" id="t-prog-value">${displayPct}%</div>
       </div>
-      <input type="range" id="t-progress" class="progress-slider" min="0" max="100" step="5" value="${v}" ${readOnly ? 'disabled' : ''}>
-      <div class="progress-quick-row">
-        ${[0, 25, 50, 75, 100].map(p =>
-          `<button type="button" class="progress-quick-btn ${v === p ? 'active' : ''}" data-progress-set="${p}" ${readOnly ? 'disabled' : ''}>${p}%</button>`
-        ).join('')}
+
+      <!-- Target field — kalau diisi, mode counter aktif -->
+      <div class="target-row" style="margin-bottom:12px">
+        <label>
+          🎯 Target (opsional)
+          <small>Isi angka kalau task pakai counter — mis: 30 outlet</small>
+        </label>
+        <div class="target-input-group">
+          <input type="number" id="t-target" min="0" placeholder="0" value="${target || ''}" ${readOnly ? 'disabled' : ''}>
+        </div>
+      </div>
+
+      <!-- Counter mode (visible kalau target > 0) -->
+      <div id="t-counter-wrap" class="target-row" style="display:${useCounter ? 'flex' : 'none'}">
+        <label>Terlaksana</label>
+        <button type="button" class="target-step-btn" id="t-target-minus" ${readOnly ? 'disabled' : ''}>−</button>
+        <div class="target-input-group">
+          <input type="number" id="t-progress-count" min="0" max="${target || ''}" value="${count}" ${readOnly ? 'disabled' : ''}>
+        </div>
+        <button type="button" class="target-step-btn" id="t-target-plus" ${readOnly ? 'disabled' : ''}>+</button>
+        <div class="target-display ${count >= target && target > 0 ? 'done' : ''}" id="t-target-display">${count} / ${target || '∞'}</div>
+      </div>
+
+      <!-- Slider mode (visible kalau target = 0) -->
+      <div id="t-slider-wrap" style="display:${useCounter ? 'none' : 'block'}">
+        <input type="range" id="t-progress" class="progress-slider" min="0" max="100" step="5" value="${p}" ${readOnly ? 'disabled' : ''}>
+        <div class="progress-quick-row">
+          ${[0, 25, 50, 75, 100].map(qp =>
+            `<button type="button" class="progress-quick-btn ${p === qp ? 'active' : ''}" data-progress-set="${qp}" ${readOnly ? 'disabled' : ''}>${qp}%</button>`
+          ).join('')}
+        </div>
       </div>
     </div>
   `;
