@@ -2431,11 +2431,12 @@ const LS_KEYS = {
 // Default notification settings (per device, di localStorage)
 const DEFAULT_NOTIF_SETTINGS = {
   enabled: false,             // master switch
-  soundEnabled: true,         // play beep saat notif
+  soundEnabled: true,         // play beep saat notif task
   notifyOnNewTask: true,      // notif kalau task baru ditambah orang lain
   notifyOnStartTime: true,    // notif kalau startTime task tiba
   notifyDailyReminder: true,  // notif harian (jam reminder) kalau ada task belum selesai
   reminderTime: '09:00',      // jam reminder harian
+  chatSoundEnabled: true,     // v2.20: sound chat (pendek, ding-dong)
 };
 
 // Warna palette untuk boards & labels
@@ -2494,7 +2495,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2717,6 +2718,50 @@ function playNotifSound() {
       cursor += dur + gapInPhrase;
     });
   } catch (e) { console.error('Sound failed', e); }
+}
+
+// v2.20: Sound khusus chat — pendek (~0.5 detik), 2-tone ding-dong, tetap keras
+function playChatSound() {
+  if (!STATE.notifSettings?.enabled || !STATE.notifSettings?.chatSoundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Pattern: ding (1400Hz, 0.16s) → pause 0.05s → dong (900Hz, 0.22s)
+    const tones = [
+      { freq: 1400, dur: 0.16 },
+      { freq:  900, dur: 0.22 },
+    ];
+    const gap = 0.05;
+    let cursor = ctx.currentTime + 0.02;
+    // Compressor untuk loudness max
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-22, ctx.currentTime);
+    compressor.knee.setValueAtTime(6, ctx.currentTime);
+    compressor.ratio.setValueAtTime(10, ctx.currentTime);
+    compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+    compressor.release.setValueAtTime(0.08, ctx.currentTime);
+    compressor.connect(ctx.destination);
+
+    tones.forEach(({ freq, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass';
+      lpf.frequency.value = 4000;
+      lpf.Q.value = 1;
+      osc.connect(lpf);
+      lpf.connect(gain);
+      gain.connect(compressor);
+      osc.type = 'square'; // tetap keras
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, cursor);
+      gain.gain.exponentialRampToValueAtTime(0.95, cursor + 0.01);
+      gain.gain.setValueAtTime(0.95, cursor + dur - 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, cursor + dur);
+      osc.start(cursor);
+      osc.stop(cursor + dur + 0.02);
+      cursor += dur + gap;
+    });
+  } catch (e) { console.error('Chat sound failed', e); }
 }
 
 // Background timer untuk cek reminder harian + startTime task
@@ -3157,7 +3202,6 @@ function subscribeMessages() {
         // Skip kalau ke-create di masa lalu (initial load late)
         const createdMs = m.createdAt?.toMillis?.() || 0;
         if (createdMs < Date.now() - 30000) return; // > 30 detik lalu, skip
-        // Notif tanpa sound (user pilih ini)
         showAppNotif(`💬 ${m.authorName || 'Anggota'}`, m.text || '', {
           type: 'default',
           icon: '💬',
@@ -3166,6 +3210,8 @@ function subscribeMessages() {
             renderMain();
           },
         });
+        // v2.20: sound chat pendek (kalau toggle aktif)
+        playChatSound();
       });
     }
     firstSnap = false;
@@ -7127,8 +7173,17 @@ function openNotifSettingsModal() {
       <div class="form-group">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="ns-sound" ${s.soundEnabled ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
-          🔊 Mainkan suara saat notif
+          🔊 Mainkan suara saat notif tugas (3 detik)
         </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Buat notif tugas baru / start time / reminder harian</div>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-chat-sound" ${s.chatSoundEnabled !== false ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          💬 Mainkan suara saat chat baru (pendek, ~0.5 detik)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Ding-dong pendek tapi tetap keras — gak ngeganggu lama</div>
       </div>
 
       <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
@@ -7161,8 +7216,9 @@ function openNotifSettingsModal() {
 
       <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
 
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" id="ns-test">🧪 Test Notif</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" id="ns-test">🧪 Test Notif Tugas</button>
+        <button class="btn btn-secondary btn-sm" id="ns-test-chat">💬 Test Sound Chat</button>
       </div>
     </div>
     <div class="modal-footer">
@@ -7207,6 +7263,26 @@ function openNotifSettingsModal() {
     }
   });
 
+  // v2.20: test sound chat khusus
+  document.getElementById('ns-test-chat')?.addEventListener('click', () => {
+    showAppNotif(
+      '💬 Tes Sound Chat',
+      'Ding-dong! Pendek tapi tetap keras.',
+      { type: 'default', icon: '💬' }
+    );
+    const oldEnabled = STATE.notifSettings?.enabled;
+    const oldChat = STATE.notifSettings?.chatSoundEnabled;
+    if (STATE.notifSettings) {
+      STATE.notifSettings.enabled = true;
+      STATE.notifSettings.chatSoundEnabled = true;
+    }
+    playChatSound();
+    if (STATE.notifSettings) {
+      STATE.notifSettings.enabled = oldEnabled;
+      STATE.notifSettings.chatSoundEnabled = oldChat;
+    }
+  });
+
   document.getElementById('ns-save').addEventListener('click', async () => {
     const enabled = document.getElementById('ns-enabled').checked;
     // Kalau enable & belum granted, minta permission
@@ -7220,6 +7296,7 @@ function openNotifSettingsModal() {
     const newSettings = {
       enabled,
       soundEnabled: document.getElementById('ns-sound').checked,
+      chatSoundEnabled: document.getElementById('ns-chat-sound').checked,
       notifyOnNewTask: document.getElementById('ns-new-task').checked,
       notifyOnStartTime: document.getElementById('ns-start-time').checked,
       notifyDailyReminder: document.getElementById('ns-daily').checked,
