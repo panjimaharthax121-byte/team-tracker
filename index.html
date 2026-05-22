@@ -1247,6 +1247,20 @@
   }
   .checklist-add-btn:hover { color: var(--primary); border-color: var(--primary); }
 
+  /* === TIME BADGE === */
+  .time-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: #f3e8ff;
+    color: #6b21a8;
+    font-family: var(--font-mono);
+  }
+
   /* === DUE DATE BADGE === */
   .due-badge {
     display: inline-flex;
@@ -1883,6 +1897,7 @@ const STATE = {
   filterMemberId: null,  // null = semua
   filterLabelIds: [],    // filter task by label (multi)
   filterCategoryId: null, // null = semua kategori
+  notifSettings: null,    // di-init dari localStorage
   currentView: 'kanban', // 'kanban' | 'recap' | 'calendar'
   calendarMonth: null,   // 'YYYY-MM' (null = bulan ini)
   recapFilters: {
@@ -1907,6 +1922,17 @@ const LS_KEYS = {
   CURRENT_MEMBER: 'team_tracker.currentMember.v1',
   AUTHED_AT: 'team_tracker.authedAt.v1',
   CURRENT_BOARD_ID: 'team_tracker.currentBoardId.v1',
+  NOTIF_SETTINGS: 'team_tracker.notifSettings.v1',
+};
+
+// Default notification settings (per device, di localStorage)
+const DEFAULT_NOTIF_SETTINGS = {
+  enabled: false,             // master switch
+  soundEnabled: true,         // play beep saat notif
+  notifyOnNewTask: true,      // notif kalau task baru ditambah orang lain
+  notifyOnStartTime: true,    // notif kalau startTime task tiba
+  notifyDailyReminder: true,  // notif harian (jam reminder) kalau ada task belum selesai
+  reminderTime: '09:00',      // jam reminder harian
 };
 
 // Warna palette untuk boards & labels
@@ -2014,6 +2040,147 @@ function avatarHtml(name, sizeClass = '') {
 }
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/* === Notification helpers === */
+function getNotifSettings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LS_KEYS.NOTIF_SETTINGS) || '{}');
+    return { ...DEFAULT_NOTIF_SETTINGS, ...stored };
+  } catch { return { ...DEFAULT_NOTIF_SETTINGS }; }
+}
+function saveNotifSettings(s) {
+  localStorage.setItem(LS_KEYS.NOTIF_SETTINGS, JSON.stringify(s));
+  STATE.notifSettings = s;
+}
+async function requestNotifPermission() {
+  if (!('Notification' in window)) {
+    toast('Browser ini tidak support notifikasi', 'error');
+    return false;
+  }
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') {
+    toast('Notif di-block. Buka settings browser untuk allow.', 'error');
+    return false;
+  }
+  const perm = await Notification.requestPermission();
+  return perm === 'granted';
+}
+function showNotif(title, body, opts = {}) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%23dc2626"><path d="M8 2h4v6h6v4h-6v6H8v-6H2V8h6z"/></svg>',
+      tag: opts.tag,
+      requireInteraction: opts.persist || false,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+    setTimeout(() => n.close(), 8000);
+  } catch (e) { console.error('Notif failed', e); }
+}
+function playNotifSound() {
+  if (!STATE.notifSettings?.enabled || !STATE.notifSettings?.soundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let i = 0;
+    const beep = () => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = i === 0 ? 880 : 1100;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+      i++;
+      if (i < 2) setTimeout(beep, 220);
+    };
+    beep();
+  } catch (e) { console.error('Sound failed', e); }
+}
+
+// Background timer untuk cek reminder harian + startTime task
+let _reminderTimer = null;
+function startReminderTimer() {
+  if (_reminderTimer) clearInterval(_reminderTimer);
+  _reminderTimer = setInterval(checkRemindersTick, 60000); // tiap menit
+  // Run immediate (skip first 5s untuk wait STATE)
+  setTimeout(checkRemindersTick, 5000);
+}
+function checkRemindersTick() {
+  const s = STATE.notifSettings;
+  if (!s || !s.enabled) return;
+  const me = STATE.currentMember;
+  if (!me) return;
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const currentTime = `${hh}:${mm}`;
+  const today = todayStr();
+
+  // 1. Daily reminder
+  if (s.notifyDailyReminder && currentTime === s.reminderTime) {
+    const lsKey = `team_tracker.lastDailyReminder.${me.id}`;
+    if (localStorage.getItem(lsKey) !== today) {
+      const unfinished = STATE.tasks.filter(t =>
+        t.assigneeId === me.id &&
+        t.status !== 'done' &&
+        ((t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId) &&
+        ((t.date === today) || (t.date && t.date < today))
+      );
+      if (unfinished.length > 0) {
+        showNotif('📋 Reminder Tugas', `Kamu masih punya ${unfinished.length} tugas belum selesai hari ini`, { tag: `daily-${today}`, persist: true });
+        playNotifSound();
+      }
+      localStorage.setItem(lsKey, today);
+    }
+  }
+
+  // 2. Start time reminder
+  if (s.notifyOnStartTime) {
+    const startingTasks = STATE.tasks.filter(t =>
+      t.assigneeId === me.id &&
+      t.startTime === currentTime &&
+      t.date === today &&
+      t.status !== 'done' &&
+      ((t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId)
+    );
+    for (const task of startingTasks) {
+      const key = `team_tracker.lastStartNotif.${task.id}.${today}`;
+      if (localStorage.getItem(key)) continue;
+      showNotif('⏰ Waktunya Mulai!', `"${task.title}" — jadwal mulai jam ${task.startTime}`, { tag: `start-${task.id}` });
+      playNotifSound();
+      localStorage.setItem(key, '1');
+    }
+  }
+}
+
+// Handle new task added via Firestore listener
+function handleNewTaskNotif(taskDoc) {
+  const s = STATE.notifSettings;
+  if (!s || !s.enabled || !s.notifyOnNewTask) return;
+  const me = STATE.currentMember;
+  if (!me) return;
+  const t = { id: taskDoc.id, ...taskDoc.data() };
+  // Skip kalau ke-create oleh me sendiri
+  if (t.createdById === me.id) return;
+  // Skip kalau bukan ke me (kecuali admin)
+  if (me.role !== 'admin' && t.assigneeId !== me.id) return;
+  // Skip task dari template auto-generate (avoid spam tiap pagi)
+  if (t.fromTemplateId) return;
+  // Skip task date sangat lampau
+  const today = todayStr();
+  if (t.date && t.date < today) return;
+
+  const creator = t.createdByName || 'Seseorang';
+  const forMe = t.assigneeId === me.id;
+  const title = forMe ? '🆕 Tugas Baru untuk Kamu' : `🆕 Tugas Baru (${t.assigneeName || '?'})`;
+  showNotif(title, `${creator}: "${t.title}"`, { tag: `new-${t.id}` });
+  playNotifSound();
 }
 
 // === Permission helpers ===
@@ -2168,6 +2335,10 @@ async function afterAuth() {
     try { STATE.currentMember = JSON.parse(storedMember); } catch {}
   }
   STATE.currentBoardId = localStorage.getItem(LS_KEYS.CURRENT_BOARD_ID) || DEFAULT_BOARD_ID;
+  STATE.notifSettings = getNotifSettings();
+
+  // Background timer untuk reminder
+  startReminderTimer();
 
   // Subscribe members; subscribeBoards akan dipanggil setelah members ready
   subscribeMembers();
@@ -2334,6 +2505,13 @@ function subscribeTasks() {
   const q = query(tasksRef, orderBy('createdAt', 'desc'), limit(1000));
   let firstSnap = true;
   STATE.unsubTasks = onSnapshot(q, async (snap) => {
+    // Detect new task added (kecuali first load) → trigger notif
+    if (!firstSnap) {
+      snap.docChanges().forEach(change => {
+        if (change.type === 'added') handleNewTaskNotif(change.doc);
+      });
+    }
+
     STATE.tasks = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => {
@@ -2860,17 +3038,33 @@ function bindRecapFilters() {
 function exportRecapData() {
   const tasks = getFilteredRecapTasks();
   if (tasks.length === 0) { toast('Tidak ada data untuk export', 'error'); return; }
-  const header = ['Tanggal', 'Kategori', 'Judul', 'Pelaksana', 'Status', 'Progress', 'Deadline', 'Diubah'];
+  const header = [
+    'Tanggal', 'Kategori', 'Judul', 'Deskripsi', 'Pelaksana',
+    'Status', 'Progress %', 'Target', 'Terlaksana',
+    'Jam Mulai', 'Jam Selesai', 'Deadline',
+    'Label', 'Dari Template', 'Dibuat', 'Diubah',
+  ];
   const rows = tasks.map(t => {
     const cat = CATEGORIES.find(c => c.id === t.category);
+    const labels = (t.labelIds || [])
+      .map(id => STATE.labels.find(l => l.id === id)?.name)
+      .filter(Boolean).join(' · ');
     return [
       t.date || '',
       cat ? cat.name : '',
       t.title || '',
+      t.description || '',
       t.assigneeName || '',
       (t.status || '').toUpperCase(),
       `${t.progress || 0}%`,
+      t.target || '',
+      t.progressCount || '',
+      t.startTime || '',
+      t.endTime || '',
       t.dueDate || '',
+      labels,
+      t.fromTemplateName || '',
+      tsToIso(t.createdAt),
       tsToIso(t.updatedAt),
     ];
   });
@@ -2945,11 +3139,18 @@ function renderRecapTable() {
     const progress = Number(t.progress) || 0;
     const updatedTime = timeAgo(t.updatedAt || t.createdAt);
     const dueBadge = t.dueDate ? `<span style="font-family:var(--font-mono);font-size:11.5px">${t.dueDate.slice(5)}</span>` : '<span style="color:var(--text-light)">—</span>';
+    const timeRange = (t.startTime || t.endTime)
+      ? `<div style="font-family:var(--font-mono);font-size:10.5px;color:#6b21a8;margin-top:2px">⏰ ${escapeHtml(t.startTime || '?')}${t.endTime ? `–${escapeHtml(t.endTime)}` : ''}</div>`
+      : '';
+    const targetVal = Number(t.target) || 0;
+    const targetInfo = targetVal > 0
+      ? `<div style="font-size:10.5px;color:var(--info);font-family:var(--font-mono);margin-top:2px">🎯 ${t.progressCount || 0}/${targetVal}</div>`
+      : '';
     return `
       <tr data-recap-task="${t.id}">
-        <td class="cell-date">${t.date || '—'}</td>
+        <td class="cell-date">${t.date || '—'}${timeRange}</td>
         <td>${catBadge}</td>
-        <td class="cell-title">${escapeHtml(t.title || '')}</td>
+        <td class="cell-title">${escapeHtml(t.title || '')}${targetInfo}</td>
         <td>
           <span style="display:inline-flex;align-items:center;gap:6px">
             ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
@@ -3136,11 +3337,20 @@ function openDayDetailModal(dateStr) {
 
   const renderTaskRow = (t) => {
     const cat = CATEGORIES.find(c => c.id === t.category);
+    const timeBadge = (t.startTime || t.endTime)
+      ? `<span class="time-badge" style="font-size:10px">⏰ ${escapeHtml(t.startTime || '?')}${t.endTime ? `–${escapeHtml(t.endTime)}` : ''}</span>`
+      : '';
+    const targetVal = Number(t.target) || 0;
+    const targetBadge = targetVal > 0
+      ? `<span class="target-badge ${(t.progressCount || 0) >= targetVal ? 'done' : ''}" style="font-size:10px">🎯 ${t.progressCount || 0}/${targetVal}</span>`
+      : '';
     return `
-      <div data-day-task="${t.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg-col);margin-bottom:6px;cursor:pointer">
+      <div data-day-task="${t.id}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg-col);margin-bottom:6px;cursor:pointer;flex-wrap:wrap">
         <span class="status-pill ${t.status || 'todo'}" style="min-width:62px;text-align:center">${(t.status || 'todo').toUpperCase()}</span>
         ${cat ? `<span class="category-badge" style="color:${cat.color};margin:0;font-size:9px">${escapeHtml(cat.short)}</span>` : ''}
-        <span style="flex:1;font-weight:500">${escapeHtml(t.title || '')}</span>
+        <span style="flex:1;font-weight:500;min-width:160px">${escapeHtml(t.title || '')}</span>
+        ${timeBadge}
+        ${targetBadge}
         <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)">
           ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
         </span>
@@ -3281,6 +3491,9 @@ function renderMain() {
             <span class="sidebar-nav-icon">📋</span>Template
           </button>
           <div class="sidebar-nav-section">Tools</div>
+          <button class="sidebar-nav-item" data-nav="notifs">
+            <span class="sidebar-nav-icon">🔔</span>Notifikasi
+          </button>
           <button class="sidebar-nav-item" data-nav="export">
             <span class="sidebar-nav-icon">📊</span>Export Data
           </button>
@@ -3395,6 +3608,7 @@ function renderMain() {
         case 'templates': openTemplatesModal(); break;
         case 'export': openExportModal(); break;
         case 'share': openShareKitModal(); break;
+        case 'notifs': openNotifSettingsModal(); break;
       }
     });
   });
@@ -3623,6 +3837,11 @@ function renderTaskCard(t) {
     ? `<span class="target-badge ${progressCount >= targetVal ? 'done' : ''}" title="Terlaksana ${progressCount} dari target ${targetVal}">🎯 ${progressCount}/${targetVal}</span>`
     : '';
 
+  // Time range badge — jam mulai & jam selesai
+  const timeBadge = (t.startTime || t.endTime)
+    ? `<span class="time-badge" title="Jadwal tugas">⏰ ${escapeHtml(t.startTime || '?')}${t.endTime ? ` – ${escapeHtml(t.endTime)}` : ''}</span>`
+    : '';
+
   // Action buttons (conditional by status & permission)
   let actionsHtml = '';
   if (!locked) {
@@ -3668,6 +3887,7 @@ function renderTaskCard(t) {
           <span class="task-card-assignee">
             ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
           </span>
+          ${timeBadge}
           ${dueBadge}
           ${targetBadge}
           ${checklistBadge}
@@ -3726,6 +3946,8 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialCategory = task?.category ?? presets.category ?? STATE.filterCategoryId ?? '';
   const initialTarget = Number(task?.target) || 0;
   const initialProgressCount = Number(task?.progressCount) || 0;
+  const initialStartTime = task?.startTime ?? presets.startTime ?? '';
+  const initialEndTime = task?.endTime ?? presets.endTime ?? '';
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -3832,9 +4054,19 @@ function openTaskModal(taskId = null, presets = {}) {
         </div>
       </div>
 
-      <div class="form-group">
-        <label class="label">Deadline (opsional)</label>
-        <input type="date" id="t-due" class="input" value="${initialDueDate}" ${disabledAttr}>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="label">Jam Mulai (opsional)</label>
+          <input type="time" id="t-start-time" class="input" value="${initialStartTime}" ${disabledAttr}>
+        </div>
+        <div class="form-group">
+          <label class="label">Jam Selesai (opsional)</label>
+          <input type="time" id="t-end-time" class="input" value="${initialEndTime}" ${disabledAttr}>
+        </div>
+        <div class="form-group">
+          <label class="label">Deadline (opsional)</label>
+          <input type="date" id="t-due" class="input" value="${initialDueDate}" ${disabledAttr}>
+        </div>
       </div>
 
       ${checklistsSection}
@@ -3891,6 +4123,8 @@ function openTaskModal(taskId = null, presets = {}) {
     const assigneeId = document.getElementById('t-assignee').value;
     const date = document.getElementById('t-date').value;
     const dueDate = document.getElementById('t-due').value || null;
+    const startTime = document.getElementById('t-start-time').value || null;
+    const endTime = document.getElementById('t-end-time').value || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
     if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
     if (!MODAL_STATE.category) { toast('Pilih kategori tugas (B2C / Online / Optimize)', 'error'); return; }
@@ -3910,6 +4144,7 @@ function openTaskModal(taskId = null, presets = {}) {
       if (isEdit) {
         const update = {
           title, description: desc, status, progress: finalProgress, date, dueDate,
+          startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           category: MODAL_STATE.category,
@@ -3928,6 +4163,7 @@ function openTaskModal(taskId = null, presets = {}) {
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
           title, description: desc, status, progress: finalProgress, date, dueDate,
+          startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           boardId: STATE.currentBoardId,
@@ -5381,6 +5617,145 @@ function openTemplateEditor(tplId) {
 }
 
 /* =============================================================
+   NOTIFICATION SETTINGS MODAL
+   ============================================================= */
+function openNotifSettingsModal() {
+  const s = STATE.notifSettings || { ...DEFAULT_NOTIF_SETTINGS };
+  const permStatus = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const permLabel = {
+    'granted': '✅ Diizinkan',
+    'denied': '❌ Diblokir (buka settings browser untuk aktifkan)',
+    'default': '⚠️ Belum di-request',
+    'unsupported': '❌ Browser tidak support',
+  };
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">🔔 Pengaturan Notifikasi</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
+        Pengaturan tersimpan per device (browser kamu). Cara kerja: Team Tracker harus dibuka (tab aktif/background) untuk notif muncul.
+      </p>
+
+      <div style="padding:10px 14px;background:var(--bg-col);border-radius:var(--radius);margin-bottom:14px;font-size:12px">
+        <strong>Status Izin Notif Browser:</strong> ${permLabel[permStatus] || permStatus}
+        ${permStatus === 'default' ? '<div style="margin-top:6px"><button class="btn btn-primary btn-sm" id="req-perm">Minta Izin Sekarang</button></div>' : ''}
+      </div>
+
+      <div class="form-group" style="padding:12px 14px;background:var(--bg-col);border-radius:var(--radius);margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+          <input type="checkbox" id="ns-enabled" ${s.enabled ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          Aktifkan Notifikasi
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Master switch — kalau off semua notif disabled</div>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-sound" ${s.soundEnabled ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          🔊 Mainkan suara saat notif
+        </label>
+      </div>
+
+      <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-new-task" ${s.notifyOnNewTask ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          🆕 Notif kalau ada tugas baru ditambah ke saya (atau ke tim, kalau admin)
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-start-time" ${s.notifyOnStartTime ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          ⏰ Notif saat jam mulai tugas tiba
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Pas jadwal "Jam Mulai" task milik kamu tiba, browser akan reminder</div>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-daily" ${s.notifyDailyReminder ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          📋 Reminder harian (jam yang dipilih)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px;margin-bottom:8px">Tiap hari di jam yang kamu set, kalau masih ada tugas belum selesai, akan notif</div>
+        <div style="padding-left:24px">
+          <input type="time" id="ns-reminder-time" class="input" value="${s.reminderTime}" style="width:auto;padding:6px 10px;font-size:14px">
+        </div>
+      </div>
+
+      <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
+
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" id="ns-test">🧪 Test Notif</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="ns-save">Simpan</button>
+    </div>
+  `);
+
+  const reqBtn = document.getElementById('req-perm');
+  if (reqBtn) reqBtn.addEventListener('click', async () => {
+    const ok = await requestNotifPermission();
+    if (ok) {
+      toast('Izin notif diberikan', 'success');
+      closeModal();
+      setTimeout(openNotifSettingsModal, 100);
+    } else {
+      toast('Izin notif ditolak', 'error');
+    }
+  });
+
+  document.getElementById('ns-test').addEventListener('click', async () => {
+    if (Notification.permission !== 'granted') {
+      const ok = await requestNotifPermission();
+      if (!ok) return;
+    }
+    showNotif('🔔 Tes Notif', 'Notifikasi Team Tracker bekerja! Suara: beep beep.', { tag: 'test-notif' });
+    // Force play sound walaupun belum di-enable di settings (untuk test)
+    const oldEnabled = STATE.notifSettings?.enabled;
+    const oldSound = STATE.notifSettings?.soundEnabled;
+    if (STATE.notifSettings) {
+      STATE.notifSettings.enabled = true;
+      STATE.notifSettings.soundEnabled = true;
+    }
+    playNotifSound();
+    if (STATE.notifSettings) {
+      STATE.notifSettings.enabled = oldEnabled;
+      STATE.notifSettings.soundEnabled = oldSound;
+    }
+  });
+
+  document.getElementById('ns-save').addEventListener('click', async () => {
+    const enabled = document.getElementById('ns-enabled').checked;
+    // Kalau enable & belum granted, minta permission
+    if (enabled && Notification.permission !== 'granted') {
+      const ok = await requestNotifPermission();
+      if (!ok) {
+        toast('Notif tidak bisa di-aktifkan tanpa izin browser', 'error');
+        return;
+      }
+    }
+    const newSettings = {
+      enabled,
+      soundEnabled: document.getElementById('ns-sound').checked,
+      notifyOnNewTask: document.getElementById('ns-new-task').checked,
+      notifyOnStartTime: document.getElementById('ns-start-time').checked,
+      notifyDailyReminder: document.getElementById('ns-daily').checked,
+      reminderTime: document.getElementById('ns-reminder-time').value || '09:00',
+    };
+    saveNotifSettings(newSettings);
+    toast('Pengaturan notif tersimpan', 'success');
+    closeModal();
+  });
+}
+
+/* =============================================================
    SHARE KIT — generate file dengan config Firebase tertanam
    ============================================================= */
 function openShareKitModal() {
@@ -5543,33 +5918,71 @@ function openExportModal() {
             title: t.title,
             description: t.description || '',
             status: t.status,
+            progress: t.progress || 0,
+            target: t.target || 0,
+            progress_count: t.progressCount || 0,
             date: t.date,
+            start_time: t.startTime || null,
+            end_time: t.endTime || null,
+            due_date: t.dueDate || null,
+            category: t.category || null,
+            labels: (t.labelIds || [])
+              .map(id => STATE.labels.find(l => l.id === id)?.name)
+              .filter(Boolean),
+            from_template: t.fromTemplateName || null,
             assignee: t.assigneeName,
             created_by: t.createdByName,
             created_at: tsToIso(t.createdAt),
             updated_at: tsToIso(t.updatedAt),
             completed_at: tsToIso(t.completedAt),
+            checklists: (t.checklists || []).map(cl => ({
+              title: cl.title || '',
+              items: (cl.items || []).map(it => ({ text: it.text, done: !!it.done })),
+            })),
             comments: (t.comments || []).map(c => ({
               author: c.authorName,
               text: c.text,
               at: c.createdAt,
             })),
+            activity: (t.activity || []).map(a => ({
+              type: a.type, by: a.byName, at: a.at, from: a.from, to: a.to,
+            })),
           })),
         }, null, 2);
       } else if (format === 'csv') {
-        const header = ['Tanggal', 'Status', 'Pelaksana', 'Judul', 'Deskripsi', 'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai', 'Jumlah Comment'];
-        const rows = tasks.map(t => [
-          t.date,
-          (t.status || '').toUpperCase(),
-          t.assigneeName || '',
-          t.title || '',
-          (t.description || '').replace(/[\r\n]+/g, ' '),
-          t.createdByName || '',
-          tsToIso(t.createdAt),
-          tsToIso(t.updatedAt),
-          tsToIso(t.completedAt),
-          (t.comments || []).length,
-        ]);
+        const header = [
+          'Tanggal', 'Jam Mulai', 'Jam Selesai', 'Kategori', 'Judul', 'Deskripsi',
+          'Pelaksana', 'Status', 'Progress %', 'Target', 'Terlaksana',
+          'Label', 'Dari Template', 'Deadline',
+          'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai', 'Jumlah Comment',
+        ];
+        const rows = tasks.map(t => {
+          const cat = CATEGORIES.find(c => c.id === t.category);
+          const labels = (t.labelIds || [])
+            .map(id => STATE.labels.find(l => l.id === id)?.name)
+            .filter(Boolean).join(' · ');
+          return [
+            t.date,
+            t.startTime || '',
+            t.endTime || '',
+            cat ? cat.name : '',
+            t.title || '',
+            (t.description || '').replace(/[\r\n]+/g, ' '),
+            t.assigneeName || '',
+            (t.status || '').toUpperCase(),
+            `${t.progress || 0}%`,
+            t.target || '',
+            t.progressCount || '',
+            labels,
+            t.fromTemplateName || '',
+            t.dueDate || '',
+            t.createdByName || '',
+            tsToIso(t.createdAt),
+            tsToIso(t.updatedAt),
+            tsToIso(t.completedAt),
+            (t.comments || []).length,
+          ];
+        });
         content = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
       } else {
         // markdown
@@ -5580,7 +5993,12 @@ function openExportModal() {
           content += `\n## ${d} (${dateLabel(d)})\n\n`;
           byDate[d].forEach(t => {
             const statusIcon = t.status === 'done' ? '[DONE]' : t.status === 'proses' ? '[PROSES]' : '[TODO]';
-            content += `- ${statusIcon} **${t.title}** — _${t.assigneeName}_\n`;
+            const cat = CATEGORIES.find(c => c.id === t.category);
+            const catStr = cat ? ` [${cat.name}]` : '';
+            const timeStr = (t.startTime || t.endTime) ? ` ⏰ ${t.startTime || '?'}${t.endTime ? '–' + t.endTime : ''}` : '';
+            const targetStr = (Number(t.target) || 0) > 0 ? ` (target ${t.progressCount || 0}/${t.target})` : '';
+            const progressStr = ` · ${t.progress || 0}%`;
+            content += `- ${statusIcon}${catStr} **${t.title}**${timeStr}${targetStr}${progressStr} — _${t.assigneeName}_\n`;
             if (t.description) content += `  > ${t.description}\n`;
             (t.comments || []).forEach(c => {
               content += `  - 💬 ${c.authorName}: ${c.text}\n`;
