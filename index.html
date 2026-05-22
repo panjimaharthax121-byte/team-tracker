@@ -2393,8 +2393,7 @@ const STATE = {
   filterMemberId: null,  // null = semua
   filterLabelIds: [],    // filter task by label (multi)
   filterCategoryId: null, // null = semua kategori
-  filterTimeRange: null,  // null=semua | 'pagi'|'siang'|'sore'|'malam'|'no-time'
-  filterFrequency: null,  // null=semua | 'manual'|'daily'|'weekly'|'monthly'
+  // v2.21: filterTimeRange & filterFrequency dihapus dari UI
   notifSettings: null,    // di-init dari localStorage
   currentView: 'kanban', // 'kanban' | 'recap' | 'calendar' | 'project' | 'chat'
   projectFilter: 'active', // 'active' (TODO/PROSES) | 'done' | 'all'
@@ -2495,7 +2494,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -3730,24 +3729,8 @@ function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
           ${labelFilterHtml}
         </div>
       ` : ''}
-      <div class="filter-divider"></div>
-      <div class="filter-group">
-        <span class="filter-group-label">Jam</span>
-        <button class="chip ${STATE.filterTimeRange === null ? 'active' : ''}" data-filter-time="">Semua</button>
-        ${TIME_RANGES.map(tr => `
-          <button class="chip ${STATE.filterTimeRange === tr.id ? 'active' : ''}" data-filter-time="${tr.id}" title="${tr.from && tr.to ? `${tr.from} – ${tr.to}` : 'Task tanpa jam mulai'}">${tr.icon} ${tr.label}</button>
-        `).join('')}
-      </div>
-      <div class="filter-divider"></div>
-      <div class="filter-group">
-        <span class="filter-group-label">Frekuensi</span>
-        <button class="chip ${STATE.filterFrequency === null ? 'active' : ''}" data-filter-freq="">Semua</button>
-        ${FREQUENCY_FILTERS.map(f => `
-          <button class="chip ${STATE.filterFrequency === f.id ? 'active' : ''}" data-filter-freq="${f.id}" style="${STATE.filterFrequency === f.id ? `background:${f.color};color:white` : `color:${f.color}`}">${escapeHtml(f.label)}</button>
-        `).join('')}
-      </div>
-      ${(STATE.filterCategoryId || STATE.filterLabelIds.length > 0 || STATE.filterTimeRange || STATE.filterFrequency) ? `
-        <button class="btn btn-ghost btn-sm" id="reset-kanban-filters" style="margin-left:auto">↺ Reset Semua Filter</button>
+      ${(STATE.filterCategoryId || STATE.filterLabelIds.length > 0) ? `
+        <button class="btn btn-ghost btn-sm" id="reset-kanban-filters" style="margin-left:auto">↺ Reset Filter</button>
       ` : ''}
     </div>
     <div id="kanban-root"></div>
@@ -4801,29 +4784,11 @@ function renderMain() {
       renderMain();
     });
   });
-  // Time range filter
-  document.querySelectorAll('[data-filter-time]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const v = btn.dataset.filterTime;
-      STATE.filterTimeRange = v === '' ? null : v;
-      renderMain();
-    });
-  });
-  // Frequency filter
-  document.querySelectorAll('[data-filter-freq]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const v = btn.dataset.filterFreq;
-      STATE.filterFrequency = v === '' ? null : v;
-      renderMain();
-    });
-  });
   // Reset all kanban filters
   const resetBtn = document.getElementById('reset-kanban-filters');
   if (resetBtn) resetBtn.addEventListener('click', () => {
     STATE.filterCategoryId = null;
     STATE.filterLabelIds = [];
-    STATE.filterTimeRange = null;
-    STATE.filterFrequency = null;
     renderMain();
   });
 
@@ -4923,36 +4888,8 @@ function renderKanban() {
       (t.labelIds || []).some(lid => STATE.filterLabelIds.includes(lid))
     );
   }
-  // Filter Jam (range)
-  if (STATE.filterTimeRange) {
-    const tr = TIME_RANGES.find(r => r.id === STATE.filterTimeRange);
-    if (tr) {
-      if (tr.id === 'no-time') {
-        filtered = filtered.filter(t => !t.startTime);
-      } else {
-        filtered = filtered.filter(t => t.startTime && t.startTime >= tr.from && t.startTime < tr.to);
-      }
-    }
-  }
-  // Filter Frekuensi (dari template)
-  if (STATE.filterFrequency) {
-    if (STATE.filterFrequency === 'manual') {
-      // Task tanpa template ATAU template manual
-      filtered = filtered.filter(t => {
-        if (!t.fromTemplateId) return true;
-        const tpl = STATE.templates.find(tp => tp.id === t.fromTemplateId);
-        return !tpl || (tpl.frequency || 'manual') === 'manual';
-      });
-    } else {
-      filtered = filtered.filter(t => {
-        if (!t.fromTemplateId) return false;
-        const tpl = STATE.templates.find(tp => tp.id === t.fromTemplateId);
-        return tpl && tpl.frequency === STATE.filterFrequency;
-      });
-    }
-  }
-
   // Sort: Label Prioritas → Jam Mulai → Kategori
+  // (v2.21: filter Jam & Frekuensi dihapus — sort by jam udah handle, template simplify v2.14 cuma harian)
   filtered = sortKanbanTasks(filtered);
 
   const cols = [
