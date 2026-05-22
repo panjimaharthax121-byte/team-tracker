@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.25 — ApotekKu</title>
+<title>Team Tracker v2.26 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1219,6 +1219,136 @@
     min-width: 20px;
     text-align: center;
     font-family: var(--font-mono);
+  }
+
+  /* === v2.26: Floating Chat (FAB + popup panel) === */
+  .chat-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(220, 38, 38, 0.35);
+    border: none;
+    transition: transform .18s, box-shadow .18s, background .15s;
+    z-index: 9000;
+  }
+  .chat-fab:hover {
+    background: var(--primary-dark);
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 6px 22px rgba(220, 38, 38, 0.45);
+  }
+  .chat-fab-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: white;
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 700;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 100px;
+    padding: 0 6px;
+    display: grid;
+    place-items: center;
+    border: 2px solid var(--primary);
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+  .chat-panel {
+    position: fixed;
+    bottom: 92px;
+    right: 24px;
+    width: 380px;
+    height: 540px;
+    max-height: calc(100vh - 130px);
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.2);
+    display: none;
+    flex-direction: column;
+    z-index: 9001;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    transform-origin: bottom right;
+    animation: chatPanelIn 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .chat-panel.open { display: flex; }
+  @keyframes chatPanelIn {
+    0% { opacity: 0; transform: translateY(12px) scale(0.95); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .chat-panel-header {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .chat-panel-title {
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chat-panel-close {
+    background: rgba(255, 255, 255, 0.18);
+    border: none;
+    color: white;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: background .15s;
+  }
+  .chat-panel-close:hover { background: rgba(255, 255, 255, 0.32); }
+  .chat-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--bg-col);
+  }
+  .chat-panel-input-bar {
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: white;
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    flex-shrink: 0;
+  }
+  .chat-panel-input-bar .chat-input { font-size: 13px; padding: 8px 14px; }
+  .chat-panel-input-bar .chat-send-btn { width: 38px; height: 38px; font-size: 16px; }
+  /* Mobile responsiveness */
+  @media (max-width: 560px) {
+    .chat-panel {
+      bottom: 0;
+      right: 0;
+      left: 0;
+      width: 100%;
+      height: 80vh;
+      max-height: 80vh;
+      border-radius: 14px 14px 0 0;
+    }
+    .chat-fab { bottom: 16px; right: 16px; }
   }
 
   /* === PROJECT PAGE (menu Tugas Proyek tersendiri) === */
@@ -2519,10 +2649,12 @@ const STATE = {
   projectFilterLabelIds: [],    // v2.22
   projectSearch: '',            // v2.22
   notDoneFilter: null,          // v2.24 — { member, category, search }
+  chatPanelOpen: false,         // v2.26 — apakah popup chat lagi visible
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
   calendarMonth: null,   // 'YYYY-MM' (null = bulan ini)
+  recapTab: 'table',     // v2.26: 'table' | 'calendar' — tab aktif di menu Rekap & Kalender
   recapFilters: {
     from: '',         // range tanggal dari
     to: '',           // range tanggal sampai
@@ -3332,8 +3464,9 @@ function subscribeMessages() {
           type: meIsMentioned ? 'start' : 'default',
           icon: meIsMentioned ? '📌' : '💬',
           onClick: () => {
-            STATE.currentView = 'chat';
-            renderMain();
+            // v2.26: buka chat panel langsung (chat udah jadi FAB, bukan view)
+            const fab = document.getElementById('chat-fab');
+            if (fab && !STATE.chatPanelOpen) fab.click();
           },
         });
         // Sound chat pendek (kalau toggle aktif)
@@ -3342,10 +3475,10 @@ function subscribeMessages() {
     }
     firstSnap = false;
 
-    // Re-render kalau lagi di view chat / sidebar (untuk update unread badge)
+    // Re-render: kalau chat panel lagi open, refresh content; kalau gak, refresh badge di FAB
     if (STATE.currentMember && STATE.boards.length > 0) {
-      if (STATE.currentView === 'chat') renderChatMessages();
-      else renderMain(); // refresh badge unread
+      if (STATE.chatPanelOpen) renderChatMessages();
+      else renderMain(); // refresh badge unread di FAB
     }
   }, (err) => console.error('Messages listener error', err));
 }
@@ -3726,9 +3859,11 @@ function subscribeTasks() {
         return ta - tb;
       });
     renderKanban();
-    renderRecapTable();
-    renderCalendarGrid();
+    // v2.26: refresh tab content (table atau calendar) di view recap
+    if (STATE.currentView === 'recap') renderRecapTabContent();
     renderProjectList();
+    // refresh list "Tidak Selesai" kalau lagi di view itu
+    if (STATE.currentView === 'notdone') renderNotDoneList();
 
     // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
@@ -4137,11 +4272,13 @@ function renderRecapPageHtml() {
     `<option value="${m.id}" ${rf.memberId === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('');
   const catOpts = CATEGORIES.map(c =>
     `<option value="${c.id}" ${rf.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  // v2.26: tab persistent state. Default = table
+  const activeTab = STATE.recapTab || 'table';
   return `
     <div class="page-title-row">
       <div>
-        <h1 class="page-title">Rekap Tugas</h1>
-        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Daftar semua tugas — buat evaluasi & review tim</div>
+        <h1 class="page-title">Rekap & Kalender</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Lihat semua tugas dalam tabel atau kalender — filter sama, klik tanggal di kalender → langsung ke tabel.</div>
       </div>
       <div class="page-toolbar">
         <button class="btn btn-secondary" id="btn-recap-export">📊 Export</button>
@@ -4150,7 +4287,8 @@ function renderRecapPageHtml() {
 
     <div id="recap-summary-root"></div>
 
-    <div class="filter-strip">
+    <!-- v2.26: Filter shared antara Tabel & Kalender -->
+    <div class="filter-strip" style="margin-bottom:14px">
       <div class="filter-group">
         <span class="filter-group-label">Dari</span>
         <input type="date" id="recap-from" class="input" style="width:auto;padding:6px 10px;font-size:13px" value="${rf.from}">
@@ -4187,11 +4325,145 @@ function renderRecapPageHtml() {
         <span class="filter-group-label">Cari</span>
         <input type="text" id="recap-search" class="input" placeholder="Ketik judul / deskripsi..." value="${escapeHtml(rf.search)}" style="flex:1">
       </div>
-      <button class="btn btn-ghost btn-sm" id="recap-reset">Reset</button>
+      <button class="btn btn-ghost btn-sm" id="recap-reset">↺ Reset</button>
     </div>
 
-    <div id="recap-table-root"></div>
+    <!-- v2.26: Tab switcher Tabel | Kalender -->
+    <div class="recap-tab-row" style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:14px">
+      <button class="recap-tab ${activeTab === 'table' ? 'active' : ''}" data-recap-tab="table" style="padding:10px 18px;background:transparent;border:none;border-bottom:3px solid ${activeTab === 'table' ? 'var(--primary)' : 'transparent'};margin-bottom:-2px;cursor:pointer;font-weight:${activeTab === 'table' ? '700' : '500'};color:${activeTab === 'table' ? 'var(--primary)' : 'var(--text-muted)'};font-size:14px;transition:all .15s">
+        📊 Tabel
+      </button>
+      <button class="recap-tab ${activeTab === 'calendar' ? 'active' : ''}" data-recap-tab="calendar" style="padding:10px 18px;background:transparent;border:none;border-bottom:3px solid ${activeTab === 'calendar' ? 'var(--primary)' : 'transparent'};margin-bottom:-2px;cursor:pointer;font-weight:${activeTab === 'calendar' ? '700' : '500'};color:${activeTab === 'calendar' ? 'var(--primary)' : 'var(--text-muted)'};font-size:14px;transition:all .15s">
+        📅 Kalender
+      </button>
+      <div style="margin-left:auto;display:flex;align-items:center;font-size:11px;color:var(--text-muted);padding:0 10px">
+        💡 Klik tanggal di kalender → langsung pindah ke Tabel ter-filter tanggal itu
+      </div>
+    </div>
+
+    <!-- v2.26: Content area — tab Tabel atau tab Kalender -->
+    <div id="recap-tab-content"></div>
   `;
+}
+
+// v2.26: render content per tab
+function renderRecapTabContent() {
+  const root = document.getElementById('recap-tab-content');
+  if (!root) return;
+  const tab = STATE.recapTab || 'table';
+  if (tab === 'calendar') {
+    root.innerHTML = renderRecapCalendarHtml();
+    bindRecapCalendarNav();
+    renderRecapCalendarGrid();
+  } else {
+    // Tabel — gunakan markup existing recap-table-root
+    root.innerHTML = `<div id="recap-table-root"></div>`;
+    renderRecapTable();
+  }
+}
+
+// v2.26: kalender variant — pakai filter shared dari recapFilters
+function renderRecapCalendarHtml() {
+  const month = getActiveCalendarMonth();
+  const [y, m] = month.split('-').map(Number);
+  const monthsId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const monthLabel = `${monthsId[m - 1]} ${y}`;
+  return `
+    <div class="calendar-wrap">
+      <div class="calendar-header">
+        <div class="calendar-month-label" id="cal-month-label">${monthLabel}</div>
+        <div class="calendar-nav">
+          <button class="calendar-nav-btn" id="cal-prev" title="Bulan lalu">‹</button>
+          <button class="btn btn-secondary btn-sm" id="cal-today">Hari ini</button>
+          <button class="calendar-nav-btn" id="cal-next" title="Bulan depan">›</button>
+        </div>
+      </div>
+      <div id="calendar-grid-root"></div>
+    </div>
+  `;
+}
+
+function bindRecapCalendarNav() {
+  const prev = document.getElementById('cal-prev');
+  const next = document.getElementById('cal-next');
+  const today = document.getElementById('cal-today');
+  if (prev) prev.addEventListener('click', () => { shiftCalendarMonth(-1); renderRecapTabContent(); });
+  if (next) next.addEventListener('click', () => { shiftCalendarMonth(1); renderRecapTabContent(); });
+  if (today) today.addEventListener('click', () => { STATE.calendarMonth = null; renderRecapTabContent(); });
+}
+
+// v2.26: grid kalender yang respect recapFilters
+function renderRecapCalendarGrid() {
+  const root = document.getElementById('calendar-grid-root');
+  if (!root) return;
+  const month = getActiveCalendarMonth();
+  const [y, m] = month.split('-').map(Number);
+  const firstDay = new Date(y, m - 1, 1);
+  const startWeekday = firstDay.getDay(); // 0 = Sun
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const today = todayStr();
+  // Hitung tasks per tanggal sesuai filter recap (KECUALI range from/to — kalender bisa lihat all-time)
+  const filtered = getFilteredRecapTasks().filter(t => !t.isDeleted && t.notCompleted !== true);
+  const tasksByDate = {};
+  filtered.forEach(t => {
+    if (t.isProject) {
+      // distribute ke semua hari range
+      const start = t.date;
+      const end = t.dueDate || t.date;
+      if (!start) return;
+      let d = new Date(start);
+      const endD = new Date(end);
+      while (d <= endD) {
+        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        (tasksByDate[key] ||= []).push(t);
+        d.setDate(d.getDate() + 1);
+      }
+    } else {
+      if (t.date) (tasksByDate[t.date] ||= []).push(t);
+    }
+  });
+
+  const dayLabels = ['M', 'S', 'S', 'R', 'K', 'J', 'S'];
+  let html = '<div class="calendar-grid">';
+  dayLabels.forEach(l => html += `<div class="calendar-day-label">${l}</div>`);
+  // Empty cells before day 1
+  for (let i = 0; i < startWeekday; i++) html += '<div class="calendar-day calendar-day-empty"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayTasks = tasksByDate[dateStr] || [];
+    const total = dayTasks.length;
+    const doneCount = dayTasks.filter(t => t.status === 'done').length;
+    const pct = total > 0 ? Math.round(doneCount * 100 / total) : 0;
+    const isToday = dateStr === today;
+    // intensity bg color (hijau makin tua kalau % done tinggi)
+    let bg = 'transparent';
+    if (total > 0) {
+      const intensity = Math.max(0.08, Math.min(0.4, total / 10));
+      bg = pct >= 80 ? `rgba(16, 185, 129, ${intensity + 0.15})` :
+           pct >= 40 ? `rgba(245, 158, 11, ${intensity + 0.1})` :
+                       `rgba(220, 38, 38, ${intensity + 0.05})`;
+    }
+    html += `
+      <div class="calendar-day ${isToday ? 'calendar-day-today' : ''}" data-cal-day="${dateStr}" style="background:${bg};cursor:pointer">
+        <div class="calendar-day-num">${d}</div>
+        ${total > 0 ? `<div class="calendar-day-stats" style="font-size:10px;line-height:1.3"><strong>${doneCount}/${total}</strong> · ${pct}%</div>` : ''}
+      </div>
+    `;
+  }
+  html += '</div>';
+  root.innerHTML = html;
+
+  // v2.26: klik tanggal → set filter from/to ke tanggal itu + switch ke tab Tabel
+  root.querySelectorAll('[data-cal-day]').forEach(el => {
+    el.addEventListener('click', () => {
+      const d = el.dataset.calDay;
+      STATE.recapFilters.from = d;
+      STATE.recapFilters.to = d;
+      STATE.recapTab = 'table';
+      renderMain();
+      toast(`Tabel di-filter ke ${d}`, 'info');
+    });
+  });
 }
 
 function getFilteredRecapTasks() {
@@ -4242,6 +4514,8 @@ function getFilteredRecapTasks() {
 
 function bindRecapFilters() {
   const rf = STATE.recapFilters;
+  // v2.26: refresh current tab content (Tabel atau Kalender) — bukan cuma table
+  const refreshTab = () => renderRecapTabContent();
   const bindInput = (id, prop, type = 'value') => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -4249,7 +4523,7 @@ function bindRecapFilters() {
     el.addEventListener(ev, () => {
       const v = el.value;
       rf[prop] = v;
-      renderRecapTable();
+      refreshTab();
     });
   };
   bindInput('recap-from', 'from');
@@ -4259,12 +4533,12 @@ function bindRecapFilters() {
   const memEl = document.getElementById('recap-member');
   if (memEl) memEl.addEventListener('change', () => {
     rf.memberId = memEl.value || null;
-    renderRecapTable();
+    refreshTab();
   });
   const catEl = document.getElementById('recap-category');
   if (catEl) catEl.addEventListener('change', () => {
     rf.categoryId = catEl.value || null;
-    renderRecapTable();
+    refreshTab();
   });
   const resetBtn = document.getElementById('recap-reset');
   if (resetBtn) resetBtn.addEventListener('click', () => {
@@ -4276,6 +4550,16 @@ function bindRecapFilters() {
   });
   const exportBtn = document.getElementById('btn-recap-export');
   if (exportBtn) exportBtn.addEventListener('click', exportRecapData);
+
+  // v2.26: tab switcher Tabel | Kalender
+  document.querySelectorAll('[data-recap-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.recapTab;
+      if (STATE.recapTab === t) return;
+      STATE.recapTab = t;
+      renderMain();
+    });
+  });
 }
 
 function exportRecapData() {
@@ -4450,22 +4734,77 @@ function renderRecapTable() {
 /* =============================================================
    CHAT PAGE (v2.18 — Live Chat tim, 1 channel umum)
    ============================================================= */
+// v2.26: Chat sekarang FAB (bottom-right) + popup panel. Function-function di bawah ini
+// tetap dipakai oleh panel (renderChatMessages, bindChatPage, dst).
 function renderChatPageHtml() {
+  // DEPRECATED v2.26: chat udah jadi FAB, gak masuk routing main view.
+  // Kept here biar gak break kalau ada reference. Render kosong.
+  return '';
+}
+
+// v2.26: FAB + chat popup panel — render di akhir main DOM via renderMain
+function renderChatFAB() {
+  const unread = unreadChatCount();
+  const isOpen = !!STATE.chatPanelOpen;
   return `
-    <div class="page-title-row">
-      <div>
-        <h1 class="page-title">Chat Tim</h1>
-        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Diskusi cepat tim B2C · real-time · tersimpan di Firestore</div>
+    <button class="chat-fab" id="chat-fab" title="Chat Tim" aria-label="Buka chat tim">
+      💬
+      ${unread > 0 ? `<span class="chat-fab-badge">${unread > 99 ? '99+' : unread}</span>` : ''}
+    </button>
+    <div class="chat-panel ${isOpen ? 'open' : ''}" id="chat-panel" role="dialog" aria-label="Chat Tim">
+      <div class="chat-panel-header">
+        <div class="chat-panel-title">💬 Chat Tim</div>
+        <button class="chat-panel-close" id="chat-panel-close" title="Tutup" aria-label="Tutup chat">×</button>
       </div>
-    </div>
-    <div class="chat-shell">
-      <div id="chat-messages-root" class="chat-messages"></div>
-      <div class="chat-input-bar">
-        <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ketik pesan... (Enter kirim, Shift+Enter baris baru)" autocomplete="off"></textarea>
+      <div class="chat-panel-body" id="chat-messages-root"></div>
+      <div class="chat-panel-input-bar">
+        <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ketik pesan... (Enter kirim)" autocomplete="off"></textarea>
         <button class="chat-send-btn" id="chat-send-btn" title="Kirim">➤</button>
       </div>
     </div>
   `;
+}
+
+function bindChatFAB() {
+  const fab = document.getElementById('chat-fab');
+  const panel = document.getElementById('chat-panel');
+  const closeBtn = document.getElementById('chat-panel-close');
+  if (!fab || !panel) return;
+
+  function openPanel() {
+    if (STATE.chatPanelOpen) return;
+    STATE.chatPanelOpen = true;
+    panel.classList.add('open');
+    // Render messages saat panel buka + bind input
+    renderChatMessages();
+    bindChatPage();
+    markChatAsRead();
+    // Refresh badge (next render); kalau gak mau wait, manual update:
+    const badge = fab.querySelector('.chat-fab-badge');
+    if (badge) badge.remove();
+  }
+  function closePanel() {
+    if (!STATE.chatPanelOpen) return;
+    STATE.chatPanelOpen = false;
+    panel.classList.remove('open');
+  }
+
+  fab.addEventListener('click', () => {
+    if (STATE.chatPanelOpen) closePanel();
+    else openPanel();
+  });
+  if (closeBtn) closeBtn.addEventListener('click', closePanel);
+
+  // ESC closes panel
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && STATE.chatPanelOpen) closePanel();
+  });
+
+  // Kalau panel udah open (re-render scenario), trigger setup
+  if (STATE.chatPanelOpen) {
+    renderChatMessages();
+    bindChatPage();
+  }
 }
 
 function renderChatMessages() {
@@ -5422,10 +5761,7 @@ function renderMain() {
             <span class="sidebar-nav-icon">📋</span>Kanban Board
           </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'recap' ? 'active' : ''}" data-nav="recap">
-            <span class="sidebar-nav-icon">📊</span>Rekap Tugas
-          </button>
-          <button class="sidebar-nav-item ${STATE.currentView === 'calendar' ? 'active' : ''}" data-nav="calendar">
-            <span class="sidebar-nav-icon">📅</span>Kalender Tugas
+            <span class="sidebar-nav-icon">📊</span>Rekap & Kalender
           </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'project' ? 'active' : ''}" data-nav="project">
             <span class="sidebar-nav-icon">📌</span>Tugas Proyek
@@ -5437,16 +5773,6 @@ function renderMain() {
               return n > 0 ? `<span class="sidebar-nav-badge" style="background:#dc2626">${n > 99 ? '99+' : n}</span>` : '';
             })()}
           </button>
-          <button class="sidebar-nav-item ${STATE.currentView === 'chat' ? 'active' : ''}" data-nav="chat">
-            <span class="sidebar-nav-icon">💬</span>Chat Tim
-            ${(() => {
-              const n = unreadChatCount();
-              return n > 0 ? `<span class="sidebar-nav-badge">${n > 99 ? '99+' : n}</span>` : '';
-            })()}
-          </button>
-          <button class="sidebar-nav-item" data-nav="members">
-            <span class="sidebar-nav-icon">👥</span>Data Pengguna
-          </button>
           <div class="sidebar-nav-section">Konfigurasi</div>
           <button class="sidebar-nav-item" data-nav="labels">
             <span class="sidebar-nav-icon">🏷️</span>Labels
@@ -5455,6 +5781,9 @@ function renderMain() {
             <span class="sidebar-nav-icon">📋</span>Template
           </button>
           <div class="sidebar-nav-section">Tools</div>
+          <button class="sidebar-nav-item" data-nav="members">
+            <span class="sidebar-nav-icon">👥</span>Data Pengguna
+          </button>
           <button class="sidebar-nav-item" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
           </button>
@@ -5497,17 +5826,15 @@ function renderMain() {
         <div class="page-content">
           ${STATE.currentView === 'recap'
             ? renderRecapPageHtml()
-            : (STATE.currentView === 'calendar'
-              ? renderCalendarPageHtml()
-              : (STATE.currentView === 'project'
-                ? renderProjectPageHtml()
-                : (STATE.currentView === 'chat'
-                  ? renderChatPageHtml()
-                  : (STATE.currentView === 'notdone'
-                    ? renderNotDonePageHtml()
-                    : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))}
+            : (STATE.currentView === 'project'
+              ? renderProjectPageHtml()
+              : (STATE.currentView === 'notdone'
+                ? renderNotDonePageHtml()
+                : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))}
         </div>
       </main>
+      <!-- v2.26: Floating Chat Button + Panel -->
+      ${renderChatFAB()}
     </div>
   `;
 
@@ -5570,8 +5897,8 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // v2.25: View switches — include 'notdone' (sebelumnya kelewat)
-      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project' || target === 'chat' || target === 'notdone') {
+      // v2.26: View switches — calendar gabung ke recap, chat jadi FAB
+      if (target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -5591,28 +5918,18 @@ function renderMain() {
     });
   });
 
-  // Recap view bindings (only if currentView=recap)
+  // v2.26: Recap view bindings — Rekap & Kalender digabung (tab switcher di dalam)
   if (STATE.currentView === 'recap') {
     bindRecapFilters();
-    renderRecapTable();
-  }
-  // Calendar view bindings
-  if (STATE.currentView === 'calendar') {
-    bindCalendarNav();
-    renderCalendarGrid();
+    renderRecapTabContent(); // render Tabel atau Kalender sesuai STATE.recapTab
   }
   // Project view bindings
   if (STATE.currentView === 'project') {
     bindProjectPage();
     renderProjectList();
   }
-  // Chat view bindings
-  if (STATE.currentView === 'chat') {
-    bindChatPage();
-    renderChatMessages();
-    // Mark as read saat user buka chat
-    markChatAsRead();
-  }
+  // v2.26: Chat panel — selalu ada di DOM (FAB di pojok). Binding handler.
+  bindChatFAB();
   // v2.24: Not-done view bindings
   if (STATE.currentView === 'notdone') {
     bindNotDonePage();
