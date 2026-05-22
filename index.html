@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker — ApotekKu</title>
+<title>Team Tracker v2.24 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -989,6 +989,8 @@
     background: rgba(255,255,255,0.25);
     color: white;
   }
+  /* v2.24: Mention picker dropdown */
+  .mention-picker-item:hover { background: var(--bg-col) !important; }
 
   /* === KENDALA BADGE === */
   .kendala-badge {
@@ -2516,6 +2518,7 @@ const STATE = {
   projectFilterMember: null,    // v2.22 — 'me' | memberId | null
   projectFilterLabelIds: [],    // v2.22
   projectSearch: '',            // v2.22
+  notDoneFilter: null,          // v2.24 — { member, category, search }
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -3374,36 +3377,208 @@ function switchBoard(boardId) {
   renderMain();
 }
 
-// v2.22: @Mention helpers
-// Detect @nama di text → tag dengan <span class="mention">. Plus return mentioned member IDs.
+// v2.22→v2.24: @Mention helpers — match full name, first name, atau sub-name (case-insensitive)
+// Bug v2.22-v2.23: regex `\b` butuh exact full-name match → "@Panji" gak match member "Panji Maharthax".
+// Fix v2.24: bikin candidate list dari full name + first word + last word, sort by length desc, match boundary stop sebelum karakter non-word.
 function parseMentions(rawText) {
   const text = String(rawText || '');
-  if (!text.includes('@')) return { html: escapeHtml(text), mentionedIds: [] };
-  const members = STATE.members || [];
-  // Sort by length desc supaya "Adit Setiawan" match before "Adit"
-  const memberNames = members.slice().sort((a, b) => (b.name || '').length - (a.name || '').length);
+  if (!text || !text.includes('@')) return { html: escapeHtml(text), mentionedIds: [] };
+  if (!Array.isArray(STATE.members) || STATE.members.length === 0) {
+    return { html: escapeHtml(text), mentionedIds: [] };
+  }
+  const meId = STATE.currentMember?.id || null;
+  const members = STATE.members.filter(m => m && typeof m.name === 'string' && m.name.trim().length > 0);
+  if (members.length === 0) return { html: escapeHtml(text), mentionedIds: [] };
+
+  // Build candidates: setiap member punya beberapa pattern (full name, first word, last word)
+  // Dedup by string supaya gak match dobel. Sort by length desc agar longest match dulu.
+  const candidates = [];
+  const seen = new Set();
+  members.forEach(m => {
+    const fullName = m.name.trim();
+    const words = fullName.split(/\s+/).filter(Boolean);
+    const variants = [fullName];
+    if (words.length > 1) {
+      variants.push(words[0]);              // first name
+      variants.push(words[words.length - 1]); // last name
+    }
+    variants.forEach(v => {
+      const key = `${v.toLowerCase()}|${m.id}`;
+      if (seen.has(key) || !v) return;
+      seen.add(key);
+      candidates.push({ pattern: v, member: m });
+    });
+  });
+  candidates.sort((a, b) => b.pattern.length - a.pattern.length);
+
   const mentionedIds = new Set();
   let html = escapeHtml(text);
-  // Replace @name dengan span
-  memberNames.forEach(m => {
-    const escName = m.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Match @name dengan boundary (space/punct/start/end)
-    const re = new RegExp(`(^|[\\s.,!?])@(${escName})\\b`, 'gi');
+  candidates.forEach(({ pattern, member: m }) => {
+    const escPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Boundary: match @pattern di mana ABIS pattern bukan word char (atau end of string)
+    // Awal: ^ atau space/punct (jaga @abc@def gak tertukar)
+    const re = new RegExp(`(^|[\\s.,!?:;()\\[\\]"])@(${escPattern})(?=$|[\\s.,!?:;()\\[\\]"]|<)`, 'gi');
     html = html.replace(re, (match, prefix, nameMatch) => {
-      mentionedIds.add(m.id);
+      if (m.id !== meId) mentionedIds.add(m.id);
       return `${prefix}<span class="mention" title="Mention ke ${escapeHtml(m.name)}">@${escapeHtml(nameMatch)}</span>`;
     });
   });
   return { html, mentionedIds: Array.from(mentionedIds) };
 }
 
-// v2.22: Time tracking helpers
+// v2.24: Mention picker setup — attach ke textarea/input, popup member list saat ketik @
+function setupMentionPicker(inputEl, opts = {}) {
+  if (!inputEl) return;
+  if (inputEl._mentionPickerAttached) return;
+  inputEl._mentionPickerAttached = true;
+
+  // Buat dropdown element sekali
+  let dropdown = null;
+  function ensureDropdown() {
+    if (dropdown) return dropdown;
+    dropdown = document.createElement('div');
+    dropdown.className = 'mention-picker';
+    dropdown.style.cssText = 'position:absolute;background:white;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:9999;max-height:200px;overflow-y:auto;min-width:180px;display:none';
+    document.body.appendChild(dropdown);
+    return dropdown;
+  }
+
+  function closeDropdown() {
+    if (dropdown) dropdown.style.display = 'none';
+  }
+
+  function positionDropdown() {
+    if (!dropdown) return;
+    const rect = inputEl.getBoundingClientRect();
+    dropdown.style.left = `${rect.left + window.scrollX}px`;
+    dropdown.style.top = `${rect.bottom + window.scrollY + 4}px`;
+  }
+
+  let activeIndex = 0;
+  let candidates = [];
+  let mentionStart = -1;
+
+  function findMentionAtCursor() {
+    const pos = inputEl.selectionStart;
+    const text = inputEl.value;
+    // Cari @ terakhir sebelum cursor, tanpa space di antara
+    let i = pos - 1;
+    let query = '';
+    while (i >= 0) {
+      const ch = text[i];
+      if (ch === '@') {
+        // Cek char sebelum @ harus start/space/punct
+        if (i === 0 || /[\s.,!?:;()[\]"]/.test(text[i-1])) {
+          return { start: i, query };
+        }
+        return null;
+      }
+      if (/\s/.test(ch)) return null;
+      query = ch + query;
+      i--;
+    }
+    return null;
+  }
+
+  function render() {
+    const dd = ensureDropdown();
+    if (candidates.length === 0) { closeDropdown(); return; }
+    dd.innerHTML = candidates.map((m, i) => `
+      <div class="mention-picker-item" data-mp-idx="${i}" style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;${i === activeIndex ? 'background:var(--bg-col)' : ''}">
+        <span style="width:24px;height:24px;border-radius:50%;background:${colorFor(m.name)};color:white;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${escapeHtml(initials(m.name))}</span>
+        <span>${escapeHtml(m.name)}</span>
+      </div>
+    `).join('');
+    dd.querySelectorAll('[data-mp-idx]').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const idx = parseInt(el.dataset.mpIdx, 10);
+        pickCandidate(idx);
+      });
+    });
+    positionDropdown();
+    dd.style.display = 'block';
+  }
+
+  function pickCandidate(idx) {
+    const m = candidates[idx];
+    if (!m || mentionStart < 0) return;
+    const text = inputEl.value;
+    const pos = inputEl.selectionStart;
+    // Insert @firstName (atau full name kalau cuma 1 kata) + space
+    const firstName = m.name.trim().split(/\s+/)[0];
+    const before = text.slice(0, mentionStart);
+    const after = text.slice(pos);
+    const insert = '@' + firstName + ' ';
+    inputEl.value = before + insert + after;
+    const newPos = before.length + insert.length;
+    inputEl.setSelectionRange(newPos, newPos);
+    inputEl.focus();
+    closeDropdown();
+    candidates = [];
+  }
+
+  inputEl.addEventListener('input', () => {
+    const found = findMentionAtCursor();
+    if (!found) { closeDropdown(); candidates = []; return; }
+    mentionStart = found.start;
+    const q = found.query.toLowerCase();
+    const meId = STATE.currentMember?.id || null;
+    const members = (STATE.members || []).filter(m => m && m.name);
+    candidates = members.filter(m => {
+      if (m.id === meId) return false; // skip self
+      return m.name.toLowerCase().includes(q);
+    }).slice(0, 8);
+    activeIndex = 0;
+    render();
+  });
+
+  inputEl.addEventListener('keydown', (e) => {
+    if (!dropdown || dropdown.style.display === 'none' || candidates.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % candidates.length;
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + candidates.length) % candidates.length;
+      render();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      pickCandidate(activeIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDropdown();
+    }
+  });
+
+  inputEl.addEventListener('blur', () => {
+    // Delay close supaya klik dropdown bisa fire
+    setTimeout(closeDropdown, 200);
+  });
+  window.addEventListener('scroll', () => {
+    if (dropdown && dropdown.style.display !== 'none') positionDropdown();
+  }, true);
+}
+
+// v2.24: Time tracking helpers · auto-track via status (proses=start, lainnya=stop)
+// Cap session 8 jam (kalau lupa stop atau status nyangkut). Render & calc apply cap.
+const TIMETRACK_CAP_MS = 8 * 60 * 60 * 1000; // 8 jam max per session
 function totalTimeMinutes(task) {
   const log = task?.timeLog || [];
   let totalMs = 0;
+  const now = Date.now();
   log.forEach(s => {
-    if (s.duration) totalMs += s.duration;
-    else if (s.startedAt && s.endedAt) totalMs += (s.endedAt - s.startedAt);
+    if (s.duration) {
+      totalMs += Math.min(s.duration, TIMETRACK_CAP_MS);
+    } else if (s.startedAt && s.endedAt) {
+      totalMs += Math.min(s.endedAt - s.startedAt, TIMETRACK_CAP_MS);
+    } else if (s.startedAt && !s.endedAt) {
+      // session masih running — estimasi pakai now − startedAt, cap 8 jam
+      const elapsed = Math.min(now - s.startedAt, TIMETRACK_CAP_MS);
+      if (elapsed > 0) totalMs += elapsed;
+    }
   });
   return Math.round(totalMs / 60000);
 }
@@ -3413,6 +3588,43 @@ function activeTimerSession(task) {
   const me = STATE.currentMember;
   if (!me) return null;
   return log.find(s => s.memberId === me.id && s.startedAt && !s.endedAt);
+}
+// v2.24: helper utk apply auto-track logic ke update object
+// Dipanggil di updateTaskStatus & save handler. Memberi: { timeLog, ... } update fragment.
+function applyAutoTimeTrack(task, oldStatus, newStatus, meId, meName) {
+  if (!meId) return null;
+  const oldIsWorking = oldStatus === 'proses';
+  const newIsWorking = newStatus === 'proses';
+  if (oldIsWorking === newIsWorking) return null; // no change
+  const log = (task?.timeLog || []).slice();
+  if (newIsWorking) {
+    // START — pastikan belum ada session aktif untuk me, lalu push baru
+    const hasActive = log.some(s => s.memberId === meId && s.startedAt && !s.endedAt);
+    if (hasActive) return null;
+    log.push({
+      id: uid(),
+      memberId: meId,
+      memberName: meName,
+      startedAt: Date.now(),
+      endedAt: null,
+      auto: true,
+    });
+    return { timeLog: log };
+  } else {
+    // STOP — close session aktif untuk me
+    let changed = false;
+    const updated = log.map(s => {
+      if (s.memberId === meId && s.startedAt && !s.endedAt) {
+        changed = true;
+        const endedAt = Date.now();
+        const rawDur = endedAt - s.startedAt;
+        const duration = Math.min(rawDur, TIMETRACK_CAP_MS); // cap 8 jam
+        return { ...s, endedAt, duration };
+      }
+      return s;
+    });
+    return changed ? { timeLog: updated } : null;
+  }
 }
 function fmtMinutes(min) {
   if (min < 60) return `${min}m`;
@@ -3900,9 +4112,12 @@ function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
           ${labelFilterHtml}
         </div>
       ` : ''}
-      ${(STATE.filterCategoryId || STATE.filterLabelIds.length > 0) ? `
-        <button class="btn btn-ghost btn-sm" id="reset-kanban-filters" style="margin-left:auto">↺ Reset Filter</button>
-      ` : ''}
+      ${(() => {
+        // v2.24: reset button selalu show, dim kalau gak ada filter active
+        const today = todayStr();
+        const hasFilter = STATE.filterCategoryId || STATE.filterLabelIds.length > 0 || STATE.selectedDate !== today;
+        return `<button class="btn btn-ghost btn-sm" id="reset-kanban-filters" style="margin-left:auto;${hasFilter ? '' : 'opacity:0.4;cursor:default'}" ${hasFilter ? '' : 'disabled'}>↺ Reset Filter</button>`;
+      })()}
     </div>
     <div id="kanban-root"></div>
   `;
@@ -4340,6 +4555,9 @@ function bindChatPage() {
     input.style.height = Math.min(120, input.scrollHeight) + 'px';
   });
 
+  // v2.24: @mention picker
+  setupMentionPicker(input);
+
   async function sendMsg() {
     const text = input.value.trim();
     if (!text) return;
@@ -4646,30 +4864,214 @@ function bindProjectPage() {
       renderMain();
     });
   });
-  // v2.22: search input (debounced)
+  // v2.22: search input (debounced) · v2.23: simpan timer di STATE biar bisa di-cancel saat reset
   const searchEl = document.getElementById('proj-search');
   if (searchEl) {
-    let timer = null;
     searchEl.addEventListener('input', () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
+      if (STATE._projSearchTimer) clearTimeout(STATE._projSearchTimer);
+      STATE._projSearchTimer = setTimeout(() => {
+        STATE._projSearchTimer = null;
         STATE.projectSearch = searchEl.value || '';
         renderProjectList(); // gak perlu renderMain, cuma list yg refresh
       }, 250);
     });
   }
-  // Reset filter button
+  // Reset filter button — v2.23: clear input element + cancel pending debounce
   const resetBtn = document.getElementById('reset-project-filters');
   if (resetBtn) resetBtn.addEventListener('click', () => {
+    if (STATE._projSearchTimer) { clearTimeout(STATE._projSearchTimer); STATE._projSearchTimer = null; }
     STATE.projectFilterCategory = null;
     STATE.projectFilterMember = null;
     STATE.projectFilterLabelIds = [];
     STATE.projectSearch = '';
+    if (searchEl) searchEl.value = '';
     renderMain();
   });
 
   const newBtn = document.getElementById('btn-new-project');
   if (newBtn) newBtn.addEventListener('click', () => openTaskModal(null, { isProject: true }));
+}
+
+/* =============================================================
+   v2.24: TUGAS TIDAK SELESAI VIEW
+   ============================================================= */
+function renderNotDonePageHtml() {
+  const tasks = STATE.tasks.filter(t => t.notCompleted === true && !t.isDeleted);
+  const totalCount = tasks.length;
+  const filter = STATE.notDoneFilter || { member: null, category: null, search: '' };
+
+  // Stats per member & per kategori
+  const byMember = {};
+  const byCat = {};
+  tasks.forEach(t => {
+    const mId = t.assigneeId || '?';
+    byMember[mId] = (byMember[mId] || 0) + 1;
+    const cId = t.category || '?';
+    byCat[cId] = (byCat[cId] || 0) + 1;
+  });
+
+  return `
+    <h1 class="page-title">🚫 Tugas Tidak Selesai</h1>
+    <div class="page-subtitle" style="margin-bottom:18px">Review task yang ditandai tidak selesai. Total: <strong>${totalCount}</strong></div>
+
+    <div class="filter-row" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;background:var(--bg-col);border-radius:8px;margin-bottom:16px">
+      <div class="filter-group">
+        <span class="filter-group-label">Pelaksana</span>
+        <button class="chip ${!filter.member ? 'active' : ''}" data-nd-filter-member="">Semua</button>
+        ${STATE.members.map(m => `
+          <button class="chip ${filter.member === m.id ? 'active' : ''}" data-nd-filter-member="${m.id}">
+            ${escapeHtml(m.name)} ${byMember[m.id] ? `<span style="opacity:0.7">(${byMember[m.id]})</span>` : ''}
+          </button>
+        `).join('')}
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Kategori</span>
+        <button class="chip ${!filter.category ? 'active' : ''}" data-nd-filter-cat="">Semua</button>
+        ${CATEGORIES.map(c => `
+          <button class="chip ${filter.category === c.id ? 'active' : ''}" data-nd-filter-cat="${c.id}" style="${filter.category === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)} ${byCat[c.id] ? `(${byCat[c.id]})` : ''}</button>
+        `).join('')}
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group" style="flex:1;min-width:200px">
+        <span class="filter-group-label">Cari</span>
+        <input type="text" id="nd-search" class="input" placeholder="Cari judul/alasan..." value="${escapeHtml(filter.search || '')}" style="flex:1;padding:6px 12px;font-size:13px">
+      </div>
+      ${(filter.member || filter.category || filter.search) ? `
+        <button class="btn btn-ghost btn-sm" id="nd-reset">↺ Reset</button>
+      ` : ''}
+    </div>
+
+    <div id="notdone-list-root"></div>
+  `;
+}
+
+function renderNotDoneList() {
+  const root = document.getElementById('notdone-list-root');
+  if (!root) return;
+  const filter = STATE.notDoneFilter || { member: null, category: null, search: '' };
+  let tasks = STATE.tasks.filter(t => t.notCompleted === true && !t.isDeleted);
+  if (filter.member) tasks = tasks.filter(t => t.assigneeId === filter.member);
+  if (filter.category) tasks = tasks.filter(t => t.category === filter.category);
+  if (filter.search) {
+    const q = filter.search.toLowerCase();
+    tasks = tasks.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.kendala || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q)
+    );
+  }
+  // Sort terbaru duluan
+  tasks.sort((a, b) => (b.notCompletedAt || 0) - (a.notCompletedAt || 0));
+
+  if (tasks.length === 0) {
+    root.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+      <div style="font-size:48px;margin-bottom:12px">🎉</div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Belum ada task tidak selesai</div>
+      <div style="font-size:13px">Task yang ditandai "Tidak Selesai" akan muncul di sini buat direview.</div>
+    </div>`;
+    return;
+  }
+
+  const rows = tasks.map(t => {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const catBadge = cat ? `<span class="category-badge" style="background:${cat.color}20;color:${cat.color}">${escapeHtml(cat.name)}</span>` : '';
+    const ts = t.notCompletedAt ? new Date(t.notCompletedAt).toLocaleString('id-ID') : '?';
+    const byName = t.notCompletedBy?.name || '?';
+    return `
+      <div class="notdone-card" style="background:white;border:1px solid var(--border);border-left:4px solid #dc2626;border-radius:8px;padding:14px 16px;margin-bottom:10px;cursor:pointer" data-nd-open="${t.id}">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;margin-bottom:6px">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:15px;margin-bottom:4px">${escapeHtml(t.title)}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px">
+              ${catBadge}
+              <span style="color:var(--text-muted)">📅 ${escapeHtml(t.date || '?')}</span>
+              <span style="color:var(--text-muted)">👤 ${escapeHtml(t.assigneeName || '?')}</span>
+            </div>
+          </div>
+          <div style="text-align:right;font-size:11px;color:var(--text-muted);white-space:nowrap">
+            <div>Ditandai ${escapeHtml(ts)}</div>
+            <div>oleh ${escapeHtml(byName)}</div>
+          </div>
+        </div>
+        <div style="background:#fef2f2;border-radius:6px;padding:10px 12px;font-size:13px;color:#991b1b;line-height:1.5">
+          <strong>Alasan:</strong> ${escapeHtml(t.kendala || '(tidak ada catatan)')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" data-stop data-nd-rework="${t.id}">↺ Kerjakan Ulang</button>
+          <button class="btn btn-ghost btn-sm" data-stop data-nd-open="${t.id}">👁️ Buka Detail</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  root.innerHTML = rows;
+
+  // Bind row click → open task modal
+  root.querySelectorAll('[data-nd-open]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTaskModal(el.dataset.ndOpen);
+    });
+  });
+  // Bind rework button
+  root.querySelectorAll('[data-nd-rework]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const taskId = btn.dataset.ndRework;
+      if (!confirm('Kerjakan ulang task ini? Status balik ke TODO & flag tidak selesai dihapus.')) return;
+      try {
+        await updateDoc(doc(STATE.db, 'tasks', taskId), {
+          notCompleted: false,
+          kendala: null,
+          notCompletedAt: null,
+          status: 'todo',
+          progress: 0,
+          updatedAt: serverTimestamp(),
+        });
+        toast('Task dikerjakan ulang', 'success');
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+function bindNotDonePage() {
+  if (!STATE.notDoneFilter) STATE.notDoneFilter = { member: null, category: null, search: '' };
+  document.querySelectorAll('[data-nd-filter-member]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.ndFilterMember;
+      STATE.notDoneFilter.member = v === '' ? null : v;
+      renderMain();
+    });
+  });
+  document.querySelectorAll('[data-nd-filter-cat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.ndFilterCat;
+      STATE.notDoneFilter.category = v === '' ? null : v;
+      renderMain();
+    });
+  });
+  const searchEl = document.getElementById('nd-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      if (STATE._ndSearchTimer) clearTimeout(STATE._ndSearchTimer);
+      STATE._ndSearchTimer = setTimeout(() => {
+        STATE._ndSearchTimer = null;
+        STATE.notDoneFilter.search = searchEl.value || '';
+        renderNotDoneList();
+      }, 250);
+    });
+  }
+  const resetBtn = document.getElementById('nd-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (STATE._ndSearchTimer) { clearTimeout(STATE._ndSearchTimer); STATE._ndSearchTimer = null; }
+      STATE.notDoneFilter = { member: null, category: null, search: '' };
+      renderMain();
+    });
+  }
 }
 
 function getActiveCalendarMonth() {
@@ -4959,6 +5361,13 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'project' ? 'active' : ''}" data-nav="project">
             <span class="sidebar-nav-icon">📌</span>Tugas Proyek
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'notdone' ? 'active' : ''}" data-nav="notdone">
+            <span class="sidebar-nav-icon">🚫</span>Tidak Selesai
+            ${(() => {
+              const n = STATE.tasks.filter(t => t.notCompleted === true).length;
+              return n > 0 ? `<span class="sidebar-nav-badge" style="background:#dc2626">${n > 99 ? '99+' : n}</span>` : '';
+            })()}
+          </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'chat' ? 'active' : ''}" data-nav="chat">
             <span class="sidebar-nav-icon">💬</span>Chat Tim
             ${(() => {
@@ -5025,7 +5434,9 @@ function renderMain() {
                 ? renderProjectPageHtml()
                 : (STATE.currentView === 'chat'
                   ? renderChatPageHtml()
-                  : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))))}
+                  : (STATE.currentView === 'notdone'
+                    ? renderNotDonePageHtml()
+                    : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))}
         </div>
       </main>
     </div>
@@ -5072,11 +5483,12 @@ function renderMain() {
       renderMain();
     });
   });
-  // Reset all kanban filters
+  // Reset all kanban filters — v2.24: termasuk reset tanggal ke hari ini
   const resetBtn = document.getElementById('reset-kanban-filters');
   if (resetBtn) resetBtn.addEventListener('click', () => {
     STATE.filterCategoryId = null;
     STATE.filterLabelIds = [];
+    STATE.selectedDate = todayStr();
     renderMain();
   });
 
@@ -5131,6 +5543,11 @@ function renderMain() {
     renderChatMessages();
     // Mark as read saat user buka chat
     markChatAsRead();
+  }
+  // v2.24: Not-done view bindings
+  if (STATE.currentView === 'notdone') {
+    bindNotDonePage();
+    renderNotDoneList();
   }
 
   // Logout
@@ -5230,6 +5647,17 @@ function renderKanban() {
     });
   });
 
+  // v2.24: Tombol "Tidak Selesai" di card → popup tanya alasan
+  root.querySelectorAll('[data-mark-notdone]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const taskId = btn.dataset.markNotdone;
+      const task = STATE.tasks.find(t => t.id === taskId);
+      if (!task || !canEditTask(task)) return;
+      openMarkNotDoneModal(task);
+    });
+  });
+
   // History button → modal Riwayat Pengerjaan
   root.querySelectorAll('[data-history]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -5315,9 +5743,9 @@ function renderTaskCard(t) {
     ? `<span class="shared-badge" title="Tugas bersama — semua anggota tim bisa update">👥 Bersama</span>`
     : '';
 
-  // Kendala badge — kalau ada catatan kendala
-  const kendalaHtml = t.kendala
-    ? `<span class="kendala-badge" title="Ada kendala: ${escapeHtml(t.kendala.slice(0, 100))}">⚠️ Ada Kendala</span>`
+  // v2.24: notCompleted badge — tampil kalau task ditandai tidak selesai (popup kendala dari card)
+  const kendalaHtml = t.notCompleted
+    ? `<span class="kendala-badge" title="Tidak selesai: ${escapeHtml((t.kendala || '').slice(0, 100))}">🚫 Tidak Selesai</span>`
     : '';
 
   // Project badge — tugas multi-hari
@@ -5400,12 +5828,16 @@ function renderTaskCard(t) {
     : '';
 
   // Action buttons (conditional by status & permission)
+  // v2.24: tombol "Tidak Selesai" ditambah di TODO & PROSES, supaya user bisa mark task gak bisa diselesaikan + isi alasan
   let actionsHtml = '';
   if (!locked) {
     if (status === 'todo') {
       actionsHtml = `
         <button class="btn btn-accent" data-stop data-quick-action="proses:${t.id}">
           Kerjakan →
+        </button>
+        <button class="btn btn-ghost-soft btn-sm" data-stop data-mark-notdone="${t.id}" title="Tandai task tidak selesai + isi alasan">
+          ✗ Tidak Selesai
         </button>
       `;
     } else if (status === 'proses') {
@@ -5415,6 +5847,9 @@ function renderTaskCard(t) {
         </button>
         <button class="btn btn-success" data-stop data-quick-action="done:${t.id}">
           ✓ Selesai
+        </button>
+        <button class="btn btn-ghost-soft btn-sm" data-stop data-mark-notdone="${t.id}" title="Tandai task tidak selesai + isi alasan">
+          ✗ Tidak Selesai
         </button>
       `;
     } else if (status === 'done') {
@@ -5508,7 +5943,7 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialEndTime = task?.endTime ?? presets.endTime ?? '';
   const initialIsShared = task?.isShared === true || presets.isShared === true;
   const initialIsProject = task?.isProject === true || presets.isProject === true;
-  const initialKendala = task?.kendala || '';
+  // v2.24: kendala dipindah ke flow "Tugas Tidak Selesai" (popup dari card), bukan field di modal.
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -5671,13 +6106,18 @@ function openTaskModal(taskId = null, presets = {}) {
 
       ${checklistsSection}
 
-      <div class="form-group">
-        <label class="label">⚠️ Kendala (opsional)</label>
-        <textarea id="t-kendala" class="textarea" placeholder="Tulis kendala atau alasan kalau task belum selesai (mis: nunggu supplier, alat rusak, dll). Tim bisa lihat & bantu." ${disabledAttr}>${escapeHtml(initialKendala)}</textarea>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-          Isi kalau task ada hambatan — tim & admin bisa lihat & coordinate solusi.
+      ${task?.notCompleted ? `
+        <div class="form-group">
+          <label class="label" style="color:var(--danger)">🚫 Tugas Ditandai Tidak Selesai</label>
+          <div style="background:#fef2f2;border-left:3px solid #dc2626;padding:10px 12px;border-radius:6px;color:#991b1b;font-size:13px;line-height:1.5">
+            <strong>Alasan:</strong> ${escapeHtml(task.kendala || '(tidak ada catatan)')}
+            ${task.notCompletedAt ? `<div style="font-size:11px;color:#7f1d1d;margin-top:6px">Ditandai pada ${new Date(task.notCompletedAt).toLocaleString('id-ID')}</div>` : ''}
+            <div style="margin-top:8px">
+              <button class="btn btn-sm btn-ghost" id="t-clear-notdone" type="button" ${disabledAttr}>↺ Kerjakan Ulang</button>
+            </div>
+          </div>
         </div>
-      </div>
+      ` : ''}
 
       ${isEdit ? renderTaskMetaInfo(task) : ''}
       ${isEdit ? renderActivitySection(task) : ''}
@@ -5787,7 +6227,6 @@ function openTaskModal(taskId = null, presets = {}) {
     }
     const startTime = document.getElementById('t-start-time').value || null;
     const endTime = document.getElementById('t-end-time').value || null;
-    const kendala = document.getElementById('t-kendala').value.trim() || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
     if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
     if (!MODAL_STATE.category) { toast('Pilih kategori tugas (B2C / Online / Optimize)', 'error'); return; }
@@ -5802,12 +6241,11 @@ function openTaskModal(taskId = null, presets = {}) {
       finalProgress = 100;
       status = 'done';
     }
-
     try {
       if (isEdit) {
         const update = {
           title, description: desc, status, progress: finalProgress, date, dueDate,
-          startTime, endTime, kendala,
+          startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
@@ -5823,12 +6261,15 @@ function openTaskModal(taskId = null, presets = {}) {
         if (newActivities.length > 0) update.activity = [...activity, ...newActivities];
         if (status === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
         if (status !== 'done' && task.status === 'done') update.completedAt = null;
+        // v2.24: AUTO TIME TRACK saat status berubah dari modal
+        const tt = applyAutoTimeTrack(task, task.status, status, me.id, me.name);
+        if (tt) update.timeLog = tt.timeLog;
         await updateDoc(doc(STATE.db, 'tasks', task.id), update);
         toast('Tugas tersimpan', 'success');
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
           title, description: desc, status, progress: finalProgress, date, dueDate,
-          startTime, endTime, kendala,
+          startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
@@ -5855,59 +6296,28 @@ function openTaskModal(taskId = null, presets = {}) {
     }
   });
 
-  // v2.22: Time tracker start/stop
+  // v2.24: Tombol Start/Stop manual DIHAPUS — time tracking sekarang auto via status (proses=start, lain=stop).
+  // Logic di applyAutoTimeTrack() + di-hook di updateTaskStatus + save handler modal.
+
+  // v2.24: Tombol "Kerjakan Ulang" di section notCompleted (kalau task ditandai gak selesai)
   if (isEdit) {
-    const startBtn = document.getElementById('t-time-start');
-    const stopBtn = document.getElementById('t-time-stop');
-    if (startBtn) {
-      startBtn.addEventListener('click', async () => {
-        const me = STATE.currentMember;
-        if (!me) return;
-        // Stop existing running sessions oleh user lain biar gak duplicate untuk dia
-        const newSession = {
-          id: uid(),
-          memberId: me.id,
-          memberName: me.name,
-          startedAt: Date.now(),
-          endedAt: null,
-        };
+    const clearNd = document.getElementById('t-clear-notdone');
+    if (clearNd) {
+      clearNd.addEventListener('click', async () => {
+        if (!confirm('Kerjakan ulang task ini? Status balik ke TODO & flag tidak selesai dihapus.')) return;
         try {
           await updateDoc(doc(STATE.db, 'tasks', task.id), {
-            timeLog: arrayUnion(newSession),
+            notCompleted: false,
+            kendala: null,
+            notCompletedAt: null,
+            status: 'todo',
+            progress: 0,
             updatedAt: serverTimestamp(),
           });
-          toast('Timer dimulai', 'success');
-          // Re-open modal supaya refresh
+          toast('Task dikerjakan ulang', 'success');
           closeModal();
-          setTimeout(() => openTaskModal(task.id), 200);
         } catch (err) {
-          toast('Gagal mulai timer: ' + err.message, 'error');
-        }
-      });
-    }
-    if (stopBtn) {
-      stopBtn.addEventListener('click', async () => {
-        const me = STATE.currentMember;
-        if (!me) return;
-        const log = (task.timeLog || []).slice();
-        const active = log.find(s => s.memberId === me.id && !s.endedAt);
-        if (!active) { toast('Tidak ada timer aktif', 'error'); return; }
-        // Replace dengan endedAt + duration
-        const endedAt = Date.now();
-        const duration = endedAt - active.startedAt;
-        const updatedLog = log.map(s =>
-          s.id === active.id ? { ...s, endedAt, duration } : s
-        );
-        try {
-          await updateDoc(doc(STATE.db, 'tasks', task.id), {
-            timeLog: updatedLog,
-            updatedAt: serverTimestamp(),
-          });
-          toast(`Timer stop · ${fmtMinutes(Math.round(duration/60000))}`, 'success');
-          closeModal();
-          setTimeout(() => openTaskModal(task.id), 200);
-        } catch (err) {
-          toast('Gagal stop timer: ' + err.message, 'error');
+          toast('Gagal: ' + err.message, 'error');
         }
       });
     }
@@ -6188,9 +6598,14 @@ function renderActivitySection(task) {
       case 'progress_changed': text = `update progress dari <strong>${a.from}%</strong> ke <strong>${a.to}%</strong>`; break;
       case 'assignee_changed': text = `pindah pelaksana dari <strong>${escapeHtml(a.from || '?')}</strong> ke <strong>${escapeHtml(a.to || '?')}</strong>`; break;
       case 'completed': text = 'tandai selesai'; break;
+      case 'marked_not_completed': text = `tandai <strong>tidak selesai</strong> — alasan: <em>${escapeHtml((a.reason || '').slice(0, 100))}</em>`; break;
       default: text = a.type;
     }
-    const icon = a.type === 'progress_changed' ? '📊' : a.type === 'status_changed' ? '🔄' : a.type === 'assignee_changed' ? '👤' : '✨';
+    const icon = a.type === 'progress_changed' ? '📊'
+      : a.type === 'status_changed' ? '🔄'
+      : a.type === 'assignee_changed' ? '👤'
+      : a.type === 'marked_not_completed' ? '🚫'
+      : '✨';
     return `
       <div class="activity-item">
         <div class="activity-icon">${icon}</div>
@@ -6375,9 +6790,11 @@ function renderProgressControl(initialProgress, initialTarget, initialCount, rea
 
 function renderTimeTracker(task) {
   const total = totalTimeMinutes(task);
-  const active = activeTimerSession(task);
+  const active = activeTimerSession(task); // session aktif by current member
   const log = task?.timeLog || [];
   const me = STATE.currentMember;
+  // v2.23: deteksi session running by orang lain (info-only)
+  const otherActive = (log || []).filter(s => s.startedAt && !s.endedAt && (!me || s.memberId !== me.id));
   // Only show button kalau user bisa edit task
   const canTrack = canEditTask(task);
 
@@ -6395,22 +6812,26 @@ function renderTimeTracker(task) {
     `;
   }).join('');
 
+  // v2.24: AUTO mode — gak ada tombol Start/Stop manual lagi. Timer jalan otomatis
+  // saat task PROSES, stop otomatis saat status berubah. Tampilan info-only.
   return `
     <div class="form-group">
-      <label class="label">⏱️ Time Tracker</label>
+      <label class="label">⏱️ Time Tracker (otomatis)</label>
       <div class="time-tracker-box">
         <div class="time-tracker-row">
           <div class="time-tracker-display">
             <div class="time-tracker-label">Total Waktu</div>
             <div class="time-tracker-total ${active ? 'time-tracker-running' : ''}">${total > 0 ? fmtMinutes(total) : '—'}${active ? ' (running)' : ''}</div>
           </div>
-          ${canTrack ? `
-            ${active
-              ? `<button class="btn btn-danger" id="t-time-stop">■ Stop</button>`
-              : `<button class="btn btn-success" id="t-time-start">▶ Mulai</button>`
-            }
-          ` : ''}
+          <div style="font-size:11px;color:var(--text-light);text-align:right;max-width:180px;line-height:1.3">
+            Timer auto-jalan saat status <strong>Proses</strong>, auto-stop saat keluar dari Proses
+          </div>
         </div>
+        ${otherActive.length > 0 ? `
+          <div class="time-tracker-other-active" style="margin-top:8px;padding:8px 10px;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
+            ⏳ Timer berjalan oleh: ${otherActive.map(s => escapeHtml(s.memberName || '?')).join(', ')}
+          </div>
+        ` : ''}
         ${log.length > 0 ? `
           <div class="time-tracker-sessions">
             <div class="time-tracker-label" style="margin-bottom:6px">Sessions (${log.length})</div>
@@ -6476,6 +6897,8 @@ function bindCommentForm(task) {
   const btn = document.getElementById('comment-submit');
   const input = document.getElementById('comment-input');
   if (!btn || !input) return;
+  // v2.24: @mention picker
+  setupMentionPicker(input);
   btn.addEventListener('click', async () => {
     const text = input.value.trim();
     if (!text) return;
@@ -6529,8 +6952,19 @@ function bindCommentDelete(task) {
       if (!target) return;
       if (!confirm('Hapus comment ini?')) return;
       try {
+        // v2.23: pakai fresh task dari STATE + filter by comment id (lebih reliable dari arrayRemove
+        // yang butuh exact field match — kalau ada field tambahan dari Firestore, gak match)
+        const fresh = STATE.tasks.find(t => t.id === task.id) || task;
+        const cid = target.id;
+        let updatedComments;
+        if (cid) {
+          updatedComments = (fresh.comments || []).filter(c => c.id !== cid);
+        } else {
+          // fallback ke arrayRemove kalau comment lama gak punya id
+          updatedComments = null;
+        }
         await updateDoc(doc(STATE.db, 'tasks', task.id), {
-          comments: arrayRemove(target),
+          comments: updatedComments !== null ? updatedComments : arrayRemove(target),
           updatedAt: serverTimestamp(),
         });
         toast('Comment dihapus', 'success');
@@ -6553,6 +6987,14 @@ async function updateTaskStatus(taskId, newStatus) {
   };
   if (newStatus === 'done' && task.status !== 'done') update.completedAt = serverTimestamp();
   if (newStatus !== 'done' && task.status === 'done') update.completedAt = null;
+  // v2.24: kalau task ditandai selesai (done), clear flag notCompleted + kendala (assume udah resolve)
+  if (newStatus === 'done') {
+    if (task.notCompleted) update.notCompleted = false;
+    if (task.kendala) update.kendala = null;
+  }
+  // v2.24: AUTO TIME TRACK — kalau status berubah proses↔non-proses, sync timeLog
+  const tt = applyAutoTimeTrack(task, task.status, newStatus, me?.id, me?.name);
+  if (tt) update.timeLog = tt.timeLog;
 
   // Activity log
   const ts = new Date().toISOString();
@@ -6580,6 +7022,81 @@ async function updateTaskStatus(taskId, newStatus) {
   } catch (err) {
     toast('Gagal update: ' + err.message, 'error');
   }
+}
+
+/* =============================================================
+   v2.24: MARK TASK AS NOT-COMPLETED (popup kendala dari card)
+   ============================================================= */
+function openMarkNotDoneModal(task) {
+  const me = STATE.currentMember;
+  if (!me) return;
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">🚫 Tandai Tidak Selesai</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+      <div style="background:#fef2f2;border-left:3px solid #dc2626;padding:12px 14px;border-radius:6px;margin-bottom:14px">
+        <div style="font-weight:600;color:#991b1b;margin-bottom:4px">Task: ${escapeHtml(task.title)}</div>
+        <div style="font-size:12px;color:#7f1d1d">Task ini akan masuk ke menu <strong>🚫 Tidak Selesai</strong> untuk direview. Status di kanban gak berubah, tapi badge "🚫 Tidak Selesai" muncul di card.</div>
+      </div>
+      <div class="form-group">
+        <label class="label">Kenapa task ini tidak bisa diselesaikan? <span style="color:#dc2626">*</span></label>
+        <textarea id="nd-kendala" class="textarea" rows="4" placeholder="Mis: nunggu supplier kirim barang, alat rusak, customer cancel, dll" autofocus></textarea>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          Wajib isi. Tim & admin bisa lihat alasan ini dan koordinasi solusi.
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-danger" id="nd-submit">🚫 Tandai Tidak Selesai</button>
+    </div>
+  `;
+  showModal(html, { size: 'md' });
+  const submitBtn = document.getElementById('nd-submit');
+  const input = document.getElementById('nd-kendala');
+  submitBtn.addEventListener('click', async () => {
+    const reason = input.value.trim();
+    if (!reason || reason.length < 5) {
+      toast('Alasan minimal 5 karakter', 'error');
+      input.focus();
+      return;
+    }
+    if (submitBtn.disabled) return;
+    submitBtn.disabled = true;
+    try {
+      const update = {
+        notCompleted: true,
+        kendala: reason,
+        notCompletedAt: Date.now(),
+        notCompletedBy: { id: me.id, name: me.name },
+        updatedAt: serverTimestamp(),
+      };
+      // Stop timer kalau lagi running
+      const tt = applyAutoTimeTrack(task, task.status, 'todo', me.id, me.name);
+      if (tt) update.timeLog = tt.timeLog;
+      // Activity log
+      const newAct = {
+        id: uid(),
+        type: 'marked_not_completed',
+        byId: me.id, byName: me.name,
+        at: new Date().toISOString(),
+        reason,
+      };
+      update.activity = [...(task.activity || []), newAct];
+      await updateDoc(doc(STATE.db, 'tasks', task.id), update);
+      toast('Task ditandai tidak selesai', 'success');
+      closeModal();
+    } catch (err) {
+      submitBtn.disabled = false;
+      toast('Gagal: ' + err.message, 'error');
+    }
+  });
+  // Ctrl+Enter submit
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitBtn.click();
+  });
 }
 
 /* =============================================================
