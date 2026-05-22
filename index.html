@@ -926,6 +926,21 @@
     margin-bottom: 6px;
   }
 
+  /* === SHARED TASK BADGE === */
+  .shared-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: var(--success-light);
+    color: #15803d;
+    margin-bottom: 6px;
+    margin-right: 4px;
+  }
+
   /* === FREQUENCY BADGE (task dari template recurring) === */
   .freq-badge {
     display: inline-flex;
@@ -1728,6 +1743,136 @@
   }
   .full-loader .loader { width: 32px; height: 32px; margin-bottom: 12px; }
 
+  /* === IN-APP NOTIFICATION (WA-style banner) === */
+  .app-notif-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 380px;
+    pointer-events: none;
+  }
+  .app-notif {
+    pointer-events: auto;
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: 0 12px 30px rgba(0,0,0,0.18), 0 4px 8px rgba(0,0,0,0.06);
+    border: 1px solid var(--border);
+    padding: 14px 14px 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    animation: notifSlideIn .3s ease-out;
+    cursor: pointer;
+    transition: transform .15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .app-notif:hover { transform: translateX(-4px); }
+  .app-notif::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--primary);
+  }
+  .app-notif.type-new::before { background: var(--info); }
+  .app-notif.type-start::before { background: var(--warning); }
+  .app-notif.type-daily::before { background: var(--primary); }
+  .app-notif-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--primary-light);
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .app-notif.type-new .app-notif-icon { background: var(--info-light); }
+  .app-notif.type-start .app-notif-icon { background: var(--warning-light); }
+  .app-notif-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .app-notif-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.3;
+    margin-bottom: 3px;
+    word-break: break-word;
+  }
+  .app-notif-message {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .app-notif-time {
+    font-size: 10.5px;
+    color: var(--text-light);
+    margin-top: 4px;
+    font-family: var(--font-mono);
+  }
+  .app-notif-close {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--bg-col);
+    color: var(--text-muted);
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+    border: none;
+    transition: all .15s;
+  }
+  .app-notif-close:hover {
+    background: var(--danger-light);
+    color: var(--danger);
+  }
+  .app-notif-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 0 100px 0 0;
+    animation: notifProgress 10s linear;
+  }
+  .app-notif.type-new .app-notif-progress { background: var(--info); }
+  .app-notif.type-start .app-notif-progress { background: var(--warning); }
+  @keyframes notifSlideIn {
+    from { transform: translateX(110%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes notifSlideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(110%); opacity: 0; }
+  }
+  @keyframes notifProgress {
+    from { width: 100%; }
+    to { width: 0%; }
+  }
+  .app-notif.dismissing { animation: notifSlideOut .25s ease-in forwards; }
+  @media (max-width: 600px) {
+    .app-notif-container {
+      top: 10px;
+      right: 10px;
+      left: 10px;
+      max-width: none;
+    }
+  }
+
   /* === TOAST === */
   .toast-container {
     position: fixed;
@@ -1870,6 +2015,7 @@
 
 <div id="modal-root"></div>
 <div id="toast-root" class="toast-container"></div>
+<div id="app-notif-root" class="app-notif-container"></div>
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js';
@@ -1992,7 +2138,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2085,60 +2231,134 @@ async function requestNotifPermission() {
   return perm === 'granted';
 }
 function showNotif(title, body, opts = {}) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  try {
-    const n = new Notification(title, {
-      body,
-      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%23dc2626"><path d="M8 2h4v6h6v4h-6v6H8v-6H2V8h6z"/></svg>',
-      tag: opts.tag,
-      requireInteraction: opts.persist || false,
-    });
-    n.onclick = () => { window.focus(); n.close(); };
-    setTimeout(() => n.close(), 8000);
-  } catch (e) { console.error('Notif failed', e); }
+  // Native browser notif (untuk tab background)
+  if (('Notification' in window) && Notification.permission === 'granted') {
+    try {
+      const n = new Notification(title, {
+        body,
+        icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%23dc2626"><path d="M8 2h4v6h6v4h-6v6H8v-6H2V8h6z"/></svg>',
+        tag: opts.tag,
+        requireInteraction: opts.persist || false,
+      });
+      n.onclick = () => {
+        window.focus();
+        n.close();
+        if (opts.onClick) opts.onClick();
+      };
+      setTimeout(() => n.close(), 8000);
+    } catch (e) { console.error('Native notif failed', e); }
+  }
+  // In-app notif (WA-style banner) — selalu tampil di app
+  showAppNotif(title, body, opts);
+}
+
+// In-app notification (custom UI banner kanan atas)
+let _appNotifCount = 0;
+function showAppNotif(title, body, opts = {}) {
+  const root = document.getElementById('app-notif-root');
+  if (!root) return;
+  const id = 'an-' + (++_appNotifCount);
+  const type = opts.type || 'default';
+  const icon = opts.icon || (type === 'new' ? '🆕' : type === 'start' ? '⏰' : type === 'daily' ? '📋' : '🔔');
+  const now = new Date();
+  const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  const el = document.createElement('div');
+  el.className = `app-notif type-${type}`;
+  el.dataset.notifId = id;
+  el.innerHTML = `
+    <div class="app-notif-icon">${icon}</div>
+    <div class="app-notif-body">
+      <div class="app-notif-title">${escapeHtml(title)}</div>
+      <div class="app-notif-message">${escapeHtml(body)}</div>
+      <div class="app-notif-time">${timeStr}</div>
+    </div>
+    <button class="app-notif-close" data-close-notif title="Tutup">✕</button>
+    <div class="app-notif-progress"></div>
+  `;
+  // Click handler — execute onClick action lalu close
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close-notif]')) return;
+    dismissAppNotif(el);
+    if (opts.onClick) opts.onClick();
+  });
+  el.querySelector('[data-close-notif]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    dismissAppNotif(el);
+  });
+  root.appendChild(el);
+
+  // Auto-dismiss after 10s
+  const timeout = setTimeout(() => dismissAppNotif(el), 10000);
+  el.dataset.timeout = timeout;
+
+  // Limit max 5 stacked notif — kick oldest
+  while (root.children.length > 5) {
+    dismissAppNotif(root.firstChild, true);
+  }
+}
+
+function dismissAppNotif(el, immediate = false) {
+  if (!el || !el.parentNode) return;
+  if (el.dataset.timeout) clearTimeout(parseInt(el.dataset.timeout, 10));
+  if (immediate) { el.remove(); return; }
+  el.classList.add('dismissing');
+  setTimeout(() => el.remove(), 250);
 }
 function playNotifSound() {
   if (!STATE.notifSettings?.enabled || !STATE.notifSettings?.soundEnabled) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    // 3-tone alarm pattern: keras + atensi-grabber (mirip notif HP)
-    const tones = [
-      { freq: 1000, dur: 0.18 },
-      { freq:  780, dur: 0.18 },
-      { freq: 1200, dur: 0.32 },
+    // ~3 detik alarm pattern: 2 phrase × 4-tone, vibes notifikasi WA tapi lebih keras
+    const phrase = [
+      { freq: 1200, dur: 0.20 },
+      { freq:  900, dur: 0.18 },
+      { freq: 1500, dur: 0.18 },
+      { freq: 1100, dur: 0.34 },
     ];
-    const gap = 0.05;
+    const gapInPhrase = 0.06;
+    const gapBetweenPhrase = 0.20;
     let cursor = ctx.currentTime + 0.02;
-    // Master compressor — bikin sound lebih "loud" tanpa clipping
+    // Master compressor
     const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-24, ctx.currentTime);
+    compressor.threshold.setValueAtTime(-22, ctx.currentTime);
     compressor.knee.setValueAtTime(6, ctx.currentTime);
-    compressor.ratio.setValueAtTime(8, ctx.currentTime);
+    compressor.ratio.setValueAtTime(10, ctx.currentTime);
     compressor.attack.setValueAtTime(0.003, ctx.currentTime);
-    compressor.release.setValueAtTime(0.1, ctx.currentTime);
+    compressor.release.setValueAtTime(0.08, ctx.currentTime);
     compressor.connect(ctx.destination);
 
-    tones.forEach(({ freq, dur }) => {
+    const playTone = (freq, dur, time) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      // Low-pass filter — bikin square wave gak terlalu harsh tapi tetap keras
       const lpf = ctx.createBiquadFilter();
       lpf.type = 'lowpass';
-      lpf.frequency.value = 3500;
+      lpf.frequency.value = 4000;
       lpf.Q.value = 1;
       osc.connect(lpf);
       lpf.connect(gain);
       gain.connect(compressor);
-      osc.type = 'square';   // square wave = lebih keras drpd sine
+      osc.type = 'square';
       osc.frequency.value = freq;
-      // Envelope: fast attack, sustain di max, fast decay
-      gain.gain.setValueAtTime(0.0001, cursor);
-      gain.gain.exponentialRampToValueAtTime(0.9, cursor + 0.015); // peak gain 0.9 (was 0.2 — ~4.5x lebih keras)
-      gain.gain.setValueAtTime(0.9, cursor + dur - 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.0001, cursor + dur);
-      osc.start(cursor);
-      osc.stop(cursor + dur + 0.02);
-      cursor += dur + gap;
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.95, time + 0.012);
+      gain.gain.setValueAtTime(0.95, time + dur - 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+      osc.start(time);
+      osc.stop(time + dur + 0.02);
+    };
+
+    // Phrase 1
+    phrase.forEach(({ freq, dur }) => {
+      playTone(freq, dur, cursor);
+      cursor += dur + gapInPhrase;
+    });
+    // Gap
+    cursor += gapBetweenPhrase;
+    // Phrase 2
+    phrase.forEach(({ freq, dur }) => {
+      playTone(freq, dur, cursor);
+      cursor += dur + gapInPhrase;
     });
   } catch (e) { console.error('Sound failed', e); }
 }
@@ -2167,13 +2387,25 @@ function checkRemindersTick() {
     const lsKey = `team_tracker.lastDailyReminder.${me.id}`;
     if (localStorage.getItem(lsKey) !== today) {
       const unfinished = STATE.tasks.filter(t =>
-        t.assigneeId === me.id &&
+        (t.assigneeId === me.id || t.isShared) &&
         t.status !== 'done' &&
         ((t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId) &&
         ((t.date === today) || (t.date && t.date < today))
       );
       if (unfinished.length > 0) {
-        showNotif('📋 Reminder Tugas', `Kamu masih punya ${unfinished.length} tugas belum selesai hari ini`, { tag: `daily-${today}`, persist: true });
+        showNotif(
+          '📋 Reminder Tugas',
+          `Kamu masih punya ${unfinished.length} tugas belum selesai hari ini`,
+          {
+            tag: `daily-${today}`,
+            persist: true,
+            type: 'daily',
+            onClick: () => {
+              STATE.currentView = 'kanban';
+              renderMain();
+            },
+          }
+        );
         playNotifSound();
       }
       localStorage.setItem(lsKey, today);
@@ -2183,7 +2415,7 @@ function checkRemindersTick() {
   // 2. Start time reminder
   if (s.notifyOnStartTime) {
     const startingTasks = STATE.tasks.filter(t =>
-      t.assigneeId === me.id &&
+      (t.assigneeId === me.id || t.isShared) &&
       t.startTime === currentTime &&
       t.date === today &&
       t.status !== 'done' &&
@@ -2192,7 +2424,16 @@ function checkRemindersTick() {
     for (const task of startingTasks) {
       const key = `team_tracker.lastStartNotif.${task.id}.${today}`;
       if (localStorage.getItem(key)) continue;
-      showNotif('⏰ Waktunya Mulai!', `"${task.title}" — jadwal mulai jam ${task.startTime}`, { tag: `start-${task.id}` });
+      const taskId = task.id;
+      showNotif(
+        '⏰ Waktunya Mulai!',
+        `"${task.title}" — jadwal mulai jam ${task.startTime}`,
+        {
+          tag: `start-${task.id}`,
+          type: 'start',
+          onClick: () => openTaskModal(taskId),
+        }
+      );
       playNotifSound();
       localStorage.setItem(key, '1');
     }
@@ -2208,8 +2449,8 @@ function handleNewTaskNotif(taskDoc) {
   const t = { id: taskDoc.id, ...taskDoc.data() };
   // Skip kalau ke-create oleh me sendiri
   if (t.createdById === me.id) return;
-  // Skip kalau bukan ke me (kecuali admin)
-  if (me.role !== 'admin' && t.assigneeId !== me.id) return;
+  // Skip kalau bukan ke me (kecuali shared OR admin)
+  if (me.role !== 'admin' && t.assigneeId !== me.id && !t.isShared) return;
   // Skip task dari template auto-generate (avoid spam tiap pagi)
   if (t.fromTemplateId) return;
   // Skip task date sangat lampau
@@ -2218,17 +2459,28 @@ function handleNewTaskNotif(taskDoc) {
 
   const creator = t.createdByName || 'Seseorang';
   const forMe = t.assigneeId === me.id;
-  const title = forMe ? '🆕 Tugas Baru untuk Kamu' : `🆕 Tugas Baru (${t.assigneeName || '?'})`;
-  showNotif(title, `${creator}: "${t.title}"`, { tag: `new-${t.id}` });
+  let title;
+  if (t.isShared) title = '👥 Tugas Bersama Baru';
+  else if (forMe) title = '🆕 Tugas Baru untuk Kamu';
+  else title = `🆕 Tugas Baru (${t.assigneeName || '?'})`;
+
+  const taskId = t.id;
+  showNotif(title, `${creator}: "${t.title}"`, {
+    tag: `new-${t.id}`,
+    type: 'new',
+    onClick: () => openTaskModal(taskId),
+  });
   playNotifSound();
 }
 
 // === Permission helpers ===
 // Member cuma bisa edit/hapus task miliknya sendiri. Admin bisa ke semua.
+// Tugas bersama (isShared) bisa diedit semua member (kolaboratif).
 function canEditTask(task) {
   const me = STATE.currentMember;
   if (!me || !task) return false;
   if (me.role === 'admin') return true;
+  if (task.isShared === true) return true;
   return task.assigneeId === me.id;
 }
 function canDeleteTask(task) {
@@ -2924,11 +3176,6 @@ function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
           <button class="chip ${STATE.filterCategoryId === c.id ? 'active' : ''}" data-filter-category="${c.id}" style="${STATE.filterCategoryId === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)}</button>
         `).join('')}
       </div>
-      <div class="filter-divider"></div>
-      <div class="filter-group">
-        <span class="filter-group-label">Anggota</span>
-        <div class="chip-row" id="member-filter-chips">${allChip}${memberChips}</div>
-      </div>
       ${STATE.labels.length > 0 ? `
         <div class="filter-divider"></div>
         <div class="filter-group">
@@ -2952,7 +3199,7 @@ function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
           <button class="chip ${STATE.filterFrequency === f.id ? 'active' : ''}" data-filter-freq="${f.id}" style="${STATE.filterFrequency === f.id ? `background:${f.color};color:white` : `color:${f.color}`}">${escapeHtml(f.label)}</button>
         `).join('')}
       </div>
-      ${(STATE.filterMemberId || STATE.filterCategoryId || STATE.filterLabelIds.length > 0 || STATE.filterTimeRange || STATE.filterFrequency) ? `
+      ${(STATE.filterCategoryId || STATE.filterLabelIds.length > 0 || STATE.filterTimeRange || STATE.filterFrequency) ? `
         <button class="btn btn-ghost btn-sm" id="reset-kanban-filters" style="margin-left:auto">↺ Reset Semua Filter</button>
       ` : ''}
     </div>
@@ -3098,7 +3345,7 @@ function exportRecapData() {
   const tasks = getFilteredRecapTasks();
   if (tasks.length === 0) { toast('Tidak ada data untuk export', 'error'); return; }
   const header = [
-    'Tanggal', 'Kategori', 'Judul', 'Deskripsi', 'Pelaksana',
+    'Tanggal', 'Kategori', 'Judul', 'Deskripsi', 'Pelaksana', 'Bersama',
     'Status', 'Progress %', 'Target', 'Terlaksana',
     'Jam Mulai', 'Jam Selesai', 'Deadline',
     'Label', 'Dari Template', 'Dibuat', 'Diubah',
@@ -3114,6 +3361,7 @@ function exportRecapData() {
       t.title || '',
       t.description || '',
       t.assigneeName || '',
+      t.isShared ? 'Ya' : '',
       (t.status || '').toUpperCase(),
       `${t.progress || 0}%`,
       t.target || '',
@@ -3660,7 +3908,6 @@ function renderMain() {
   // Reset all kanban filters
   const resetBtn = document.getElementById('reset-kanban-filters');
   if (resetBtn) resetBtn.addEventListener('click', () => {
-    STATE.filterMemberId = null;
     STATE.filterCategoryId = null;
     STATE.filterLabelIds = [];
     STATE.filterTimeRange = null;
@@ -3741,7 +3988,11 @@ function renderKanban() {
   if (!root) return;
 
   let filtered = visibleTasks();
-  if (STATE.filterMemberId) filtered = filtered.filter(t => t.assigneeId === STATE.filterMemberId);
+  // Auto-filter by current user — kanban personal view (task milik dia + tugas bersama)
+  const me = STATE.currentMember;
+  if (me) {
+    filtered = filtered.filter(t => t.assigneeId === me.id || t.isShared === true);
+  }
   if (STATE.filterCategoryId) filtered = filtered.filter(t => t.category === STATE.filterCategoryId);
   if (STATE.filterLabelIds.length > 0) {
     filtered = filtered.filter(t =>
@@ -3905,6 +4156,11 @@ function renderTaskCard(t) {
     return `<span class="carryover-badge">⏪ Carry-over dari ${d}/${m}</span>`;
   })() : '';
 
+  // Shared badge — task bersama
+  const sharedHtml = t.isShared
+    ? `<span class="shared-badge" title="Tugas bersama — semua anggota tim bisa update">👥 Bersama</span>`
+    : '';
+
   // Frequency badge — kalau task ter-generate dari template recurring
   let freqHtml = '';
   if (t.fromTemplateId) {
@@ -3985,7 +4241,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
-        ${carryoverHtml}${freqHtml}
+        ${carryoverHtml}${sharedHtml}${freqHtml}
         ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
@@ -4061,6 +4317,7 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialProgressCount = Number(task?.progressCount) || 0;
   const initialStartTime = task?.startTime ?? presets.startTime ?? '';
   const initialEndTime = task?.endTime ?? presets.endTime ?? '';
+  const initialIsShared = task?.isShared === true || presets.isShared === true;
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -4105,21 +4362,27 @@ function openTaskModal(taskId = null, presets = {}) {
     </div>
   `;
 
-  // Labels section
-  const labelsSection = STATE.labels.length > 0 ? `
+  // Labels section — ALWAYS render (fix bug: section hilang kalau STATE.labels kosong/race)
+  const labelsSection = `
     <div class="form-group">
       <label class="label">Label</label>
-      <div class="chip-row" id="t-labels-row">
-        ${STATE.labels.map(l => `
-          <button type="button" class="label-toggle ${initialLabelIds.includes(l.id) ? 'active' : ''}"
-            data-toggle-label="${l.id}" style="color:${l.color}" ${disabledAttr}>
-            <span class="label-dot" style="background:${l.color}"></span>
-            ${escapeHtml(l.name)}
-          </button>
-        `).join('')}
-      </div>
+      ${STATE.labels.length > 0 ? `
+        <div class="chip-row" id="t-labels-row">
+          ${STATE.labels.map(l => `
+            <button type="button" class="label-toggle ${initialLabelIds.includes(l.id) ? 'active' : ''}"
+              data-toggle-label="${l.id}" style="color:${l.color}" ${disabledAttr}>
+              <span class="label-dot" style="background:${l.color}"></span>
+              ${escapeHtml(l.name)}
+            </button>
+          `).join('')}
+        </div>
+      ` : `
+        <div style="padding:10px 12px;background:var(--bg-col);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted)">
+          ⏳ Belum ada label di board ini. Admin bisa tambah via menu <strong>🏷️ Labels</strong> di sidebar.
+        </div>
+      `}
     </div>
-  ` : '';
+  `;
 
   // Checklists section
   const checklistsSection = `
@@ -4158,12 +4421,22 @@ function openTaskModal(taskId = null, presets = {}) {
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
-          <label class="label">Pelaksana</label>
+          <label class="label">Pelaksana ${initialIsShared ? '<span style="color:var(--text-muted);font-weight:400">(opsional kalau bersama)</span>' : ''}</label>
           <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
         </div>
         <div class="form-group">
           <label class="label">Tanggal Aktif</label>
           <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
+        </div>
+      </div>
+
+      <div class="form-group" style="padding:12px 14px;background:${initialIsShared ? 'var(--success-light)' : 'var(--bg-col)'};border-radius:var(--radius);transition:background .2s" id="t-shared-wrap">
+        <label style="display:flex;align-items:center;gap:10px;cursor:${readOnly ? 'default' : 'pointer'};font-weight:600;font-size:13px">
+          <input type="checkbox" id="t-shared" ${initialIsShared ? 'checked' : ''} ${readOnly ? 'disabled' : ''} style="width:16px;height:16px;cursor:inherit;accent-color:var(--success)">
+          👥 Tugas Bersama
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:26px">
+          Kalau dicentang, task muncul di kanban semua anggota tim dan siapa pun bisa update progress.
         </div>
       </div>
 
@@ -4204,13 +4477,14 @@ function openTaskModal(taskId = null, presets = {}) {
     return;
   }
 
-  // Mutable state untuk modal (labels, checklists, category, target/counter)
+  // Mutable state untuk modal (labels, checklists, category, target/counter, shared)
   const MODAL_STATE = {
     labelIds: [...initialLabelIds],
     checklists: JSON.parse(JSON.stringify(initialChecklists)),
     category: initialCategory,
     target: initialTarget,
     progressCount: initialProgressCount,
+    isShared: initialIsShared,
   };
 
   // Bind progress + target counter (slider/counter switch berdasarkan target value)
@@ -4220,6 +4494,16 @@ function openTaskModal(taskId = null, presets = {}) {
   bindLabelToggles(MODAL_STATE);
   bindChecklistEditor(MODAL_STATE, readOnly);
   bindTemplatePicker();
+
+  // Bind shared checkbox
+  const sharedCb = document.getElementById('t-shared');
+  const sharedWrap = document.getElementById('t-shared-wrap');
+  if (sharedCb && !readOnly) {
+    sharedCb.addEventListener('change', () => {
+      MODAL_STATE.isShared = sharedCb.checked;
+      if (sharedWrap) sharedWrap.style.background = sharedCb.checked ? 'var(--success-light)' : 'var(--bg-col)';
+    });
+  }
 
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
@@ -4260,6 +4544,7 @@ function openTaskModal(taskId = null, presets = {}) {
           startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
+          isShared: !!MODAL_STATE.isShared,
           category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
           checklists: MODAL_STATE.checklists,
@@ -4279,6 +4564,7 @@ function openTaskModal(taskId = null, presets = {}) {
           startTime, endTime,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
+          isShared: !!MODAL_STATE.isShared,
           boardId: STATE.currentBoardId,
           category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
@@ -5825,11 +6111,15 @@ function openNotifSettingsModal() {
   });
 
   document.getElementById('ns-test').addEventListener('click', async () => {
-    if (Notification.permission !== 'granted') {
-      const ok = await requestNotifPermission();
-      if (!ok) return;
+    // Try request permission (for native browser notif), tapi in-app notif tetap jalan walau gak ada permission
+    if ('Notification' in window && Notification.permission !== 'granted') {
+      await requestNotifPermission();
     }
-    showNotif('🔔 Tes Notif', 'Notifikasi Team Tracker bekerja! Suara: beep beep.', { tag: 'test-notif' });
+    showNotif(
+      '🔔 Tes Notifikasi',
+      'Notifikasi Team Tracker bekerja! Suara berbunyi sekitar 3 detik. Klik notifikasi ini untuk close.',
+      { tag: 'test-notif', type: 'default' }
+    );
     // Force play sound walaupun belum di-enable di settings (untuk test)
     const oldEnabled = STATE.notifSettings?.enabled;
     const oldSound = STATE.notifSettings?.soundEnabled;
@@ -6042,6 +6332,7 @@ function openExportModal() {
             labels: (t.labelIds || [])
               .map(id => STATE.labels.find(l => l.id === id)?.name)
               .filter(Boolean),
+            is_shared: !!t.isShared,
             from_template: t.fromTemplateName || null,
             assignee: t.assigneeName,
             created_by: t.createdByName,
