@@ -926,6 +926,184 @@
     margin-bottom: 6px;
   }
 
+  /* === CHAT PAGE === */
+  .chat-shell {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 200px);
+    min-height: 480px;
+    overflow: hidden;
+  }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    scroll-behavior: smooth;
+  }
+  .chat-day-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0 6px;
+    color: var(--text-light);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .chat-day-divider::before, .chat-day-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .chat-msg {
+    display: flex;
+    gap: 10px;
+    max-width: 78%;
+    align-self: flex-start;
+  }
+  .chat-msg.mine {
+    align-self: flex-end;
+    flex-direction: row-reverse;
+  }
+  .chat-msg-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .chat-msg-bubble {
+    background: var(--bg-col);
+    border-radius: 14px;
+    padding: 9px 13px;
+    min-width: 60px;
+    position: relative;
+  }
+  .chat-msg.mine .chat-msg-bubble {
+    background: var(--primary);
+    color: white;
+  }
+  .chat-msg-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .chat-msg.mine .chat-msg-head { justify-content: flex-end; }
+  .chat-msg-author {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .chat-msg.mine .chat-msg-author { color: white; opacity: 0.95; }
+  .chat-msg-time {
+    font-size: 10.5px;
+    color: var(--text-light);
+    font-family: var(--font-mono);
+  }
+  .chat-msg.mine .chat-msg-time { color: rgba(255,255,255,0.7); }
+  .chat-msg-text {
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .chat-msg.mine .chat-msg-text { color: white; }
+  .chat-msg-del {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: white;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-sm);
+  }
+  .chat-msg:hover .chat-msg-del { display: flex; }
+  .chat-msg-del:hover { background: var(--danger-light); color: var(--danger); }
+  .chat-msg.deleted .chat-msg-bubble {
+    background: var(--bg-col) !important;
+    color: var(--text-light) !important;
+    font-style: italic;
+  }
+  .chat-msg.deleted .chat-msg-text {
+    color: var(--text-light) !important;
+    font-size: 12px;
+  }
+  .chat-msg.deleted .chat-msg-del { display: none !important; }
+  .chat-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-light);
+  }
+  .chat-empty-icon { font-size: 48px; opacity: 0.5; margin-bottom: 8px; }
+  .chat-input-bar {
+    display: flex;
+    gap: 10px;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    background: white;
+    align-items: flex-end;
+  }
+  .chat-input {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 10px 16px;
+    font-size: 14px;
+    resize: none;
+    max-height: 120px;
+    font-family: inherit;
+    background: var(--bg-col);
+  }
+  .chat-input:focus { outline: 2px solid var(--primary); outline-offset: -1px; background: white; }
+  .chat-send-btn {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    display: grid; place-items: center;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all .15s;
+    flex-shrink: 0;
+    border: none;
+  }
+  .chat-send-btn:hover { background: var(--primary-dark); transform: translateY(-1px); }
+  .chat-send-btn:disabled { background: var(--border-strong); cursor: not-allowed; transform: none; }
+
+  /* Sidebar nav badge for unread count */
+  .sidebar-nav-badge {
+    margin-left: auto;
+    background: var(--primary);
+    color: white;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 100px;
+    min-width: 20px;
+    text-align: center;
+    font-family: var(--font-mono);
+  }
+
   /* === PROJECT PAGE (menu Tugas Proyek tersendiri) === */
   .project-list { display: flex; flex-direction: column; gap: 14px; }
   .project-card {
@@ -2218,8 +2396,11 @@ const STATE = {
   filterTimeRange: null,  // null=semua | 'pagi'|'siang'|'sore'|'malam'|'no-time'
   filterFrequency: null,  // null=semua | 'manual'|'daily'|'weekly'|'monthly'
   notifSettings: null,    // di-init dari localStorage
-  currentView: 'kanban', // 'kanban' | 'recap' | 'calendar' | 'project'
+  currentView: 'kanban', // 'kanban' | 'recap' | 'calendar' | 'project' | 'chat'
   projectFilter: 'active', // 'active' (TODO/PROSES) | 'done' | 'all'
+  messages: [],            // chat messages
+  unsubMessages: null,
+  lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
   calendarMonth: null,   // 'YYYY-MM' (null = bulan ini)
   recapFilters: {
     from: '',         // range tanggal dari
@@ -2244,6 +2425,7 @@ const LS_KEYS = {
   AUTHED_AT: 'team_tracker.authedAt.v1',
   CURRENT_BOARD_ID: 'team_tracker.currentBoardId.v1',
   NOTIF_SETTINGS: 'team_tracker.notifSettings.v1',
+  LAST_CHAT_READ_AT: 'team_tracker.lastChatReadAt.v1',
 };
 
 // Default notification settings (per device, di localStorage)
@@ -2312,7 +2494,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2811,6 +2993,7 @@ async function afterAuth() {
   }
   STATE.currentBoardId = localStorage.getItem(LS_KEYS.CURRENT_BOARD_ID) || DEFAULT_BOARD_ID;
   STATE.notifSettings = getNotifSettings();
+  STATE.lastChatReadAt = parseInt(localStorage.getItem(LS_KEYS.LAST_CHAT_READ_AT) || '0', 10);
 
   // Background timer untuk reminder
   startReminderTimer();
@@ -2892,6 +3075,7 @@ async function subscribeBoards() {
     subscribeLabels();
     subscribeTemplates();
     subscribeTasks();
+    subscribeMessages();
 
     // Re-render
     if (STATE.currentMember && STATE.boards.length > 0) renderMain();
@@ -2951,6 +3135,63 @@ function subscribeTemplates() {
       renderMain();
     }
   }, (err) => console.error('Templates listener error', err));
+}
+
+// v2.18: subscribe live chat messages (1 channel umum)
+function subscribeMessages() {
+  if (STATE.unsubMessages) { STATE.unsubMessages(); STATE.unsubMessages = null; }
+  const msgRef = collection(STATE.db, 'messages');
+  const q = query(msgRef, orderBy('createdAt', 'asc'), limit(500));
+  let firstSnap = true;
+  STATE.unsubMessages = onSnapshot(q, (snap) => {
+    STATE.messages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Detect message baru setelah first snap → notif
+    if (!firstSnap) {
+      const me = STATE.currentMember;
+      snap.docChanges().forEach(change => {
+        if (change.type !== 'added') return;
+        const m = { id: change.doc.id, ...change.doc.data() };
+        // Skip kalau dari diri sendiri
+        if (!me || m.authorId === me.id) return;
+        // Skip kalau ke-create di masa lalu (initial load late)
+        const createdMs = m.createdAt?.toMillis?.() || 0;
+        if (createdMs < Date.now() - 30000) return; // > 30 detik lalu, skip
+        // Notif tanpa sound (user pilih ini)
+        showAppNotif(`💬 ${m.authorName || 'Anggota'}`, m.text || '', {
+          type: 'default',
+          icon: '💬',
+          onClick: () => {
+            STATE.currentView = 'chat';
+            renderMain();
+          },
+        });
+      });
+    }
+    firstSnap = false;
+
+    // Re-render kalau lagi di view chat / sidebar (untuk update unread badge)
+    if (STATE.currentMember && STATE.boards.length > 0) {
+      if (STATE.currentView === 'chat') renderChatMessages();
+      else renderMain(); // refresh badge unread
+    }
+  }, (err) => console.error('Messages listener error', err));
+}
+
+function unreadChatCount() {
+  const me = STATE.currentMember;
+  if (!me) return 0;
+  const lastRead = STATE.lastChatReadAt || 0;
+  return STATE.messages.filter(m =>
+    m.authorId !== me.id &&
+    (m.createdAt?.toMillis?.() || 0) > lastRead &&
+    m.isDeleted !== true
+  ).length;
+}
+
+function markChatAsRead() {
+  STATE.lastChatReadAt = Date.now();
+  localStorage.setItem(LS_KEYS.LAST_CHAT_READ_AT, String(STATE.lastChatReadAt));
 }
 
 function switchBoard(boardId) {
@@ -3017,8 +3258,12 @@ function visibleTasks() {
 
     // Task biasa
     if (t.date === sel) return true;
-    // Rollover: kalau pilih "Hari ini", task lampau yang belum done ikut muncul
-    if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
+    // Rollover: kalau pilih "Hari ini", task lampau yang belum done ikut muncul.
+    // FIX v2.19: Task dari template (fromTemplateId) TIDAK rollover —
+    // karena template punya jadwal hari spesifik (daysOfWeek) yang udah handle generation.
+    // Contoh: template Rabu, task Rabu gak selesai → hari Kamis JANGAN nongol di kanban.
+    // User bisa lihat task Rabu via date picker = Rabu, atau via menu Rekap/Kalender.
+    if (isToday && t.status !== 'done' && t.date && t.date < today && !t.fromTemplateId) return true;
     return false;
   });
 }
@@ -3780,6 +4025,158 @@ function renderRecapTable() {
 }
 
 /* =============================================================
+   CHAT PAGE (v2.18 — Live Chat tim, 1 channel umum)
+   ============================================================= */
+function renderChatPageHtml() {
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">Chat Tim</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Diskusi cepat tim B2C · real-time · tersimpan di Firestore</div>
+      </div>
+    </div>
+    <div class="chat-shell">
+      <div id="chat-messages-root" class="chat-messages"></div>
+      <div class="chat-input-bar">
+        <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ketik pesan... (Enter kirim, Shift+Enter baris baru)" autocomplete="off"></textarea>
+        <button class="chat-send-btn" id="chat-send-btn" title="Kirim">➤</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderChatMessages() {
+  const root = document.getElementById('chat-messages-root');
+  if (!root) return;
+  const me = STATE.currentMember;
+  const msgs = STATE.messages || [];
+
+  if (msgs.length === 0) {
+    root.innerHTML = `
+      <div class="chat-empty">
+        <div class="chat-empty-icon">💬</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">Belum ada pesan</div>
+        <div style="font-size:13px">Ketik di bawah untuk mulai diskusi sama tim</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Group messages by date (day divider)
+  const groups = [];
+  let lastDateStr = '';
+  msgs.forEach(m => {
+    const ts = m.createdAt?.toMillis?.() || 0;
+    const d = ts ? new Date(ts) : new Date();
+    const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (dateKey !== lastDateStr) {
+      const today = todayStr();
+      const yest = (() => { const x = new Date(); x.setDate(x.getDate() - 1); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`; })();
+      let label;
+      if (dateKey === today) label = 'Hari ini';
+      else if (dateKey === yest) label = 'Kemarin';
+      else label = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+      groups.push({ type: 'divider', label });
+      lastDateStr = dateKey;
+    }
+    groups.push({ type: 'msg', msg: m });
+  });
+
+  root.innerHTML = groups.map(g => {
+    if (g.type === 'divider') return `<div class="chat-day-divider">${escapeHtml(g.label)}</div>`;
+    const m = g.msg;
+    const mine = me && m.authorId === me.id;
+    const ts = m.createdAt?.toMillis?.() || 0;
+    const timeStr = ts ? (() => {
+      const d = new Date(ts);
+      return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    })() : '';
+    const isDeleted = m.isDeleted === true;
+    const canDelete = me && !isDeleted && (m.authorId === me.id || me.role === 'admin');
+    return `
+      <div class="chat-msg ${mine ? 'mine' : ''} ${isDeleted ? 'deleted' : ''}" data-msg-id="${m.id}">
+        <div class="chat-msg-avatar" style="background:${colorFor(m.authorName || '?')}">${escapeHtml(initials(m.authorName || '?'))}</div>
+        <div class="chat-msg-bubble">
+          <div class="chat-msg-head">
+            <span class="chat-msg-author">${escapeHtml(m.authorName || '?')}</span>
+            <span class="chat-msg-time">${timeStr}</span>
+          </div>
+          <div class="chat-msg-text">${isDeleted ? 'Pesan dihapus' : escapeHtml(m.text || '')}</div>
+          ${canDelete ? `<button class="chat-msg-del" data-del-msg="${m.id}" title="Hapus pesan">✕</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Bind delete buttons
+  root.querySelectorAll('[data-del-msg]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Hapus pesan ini?')) return;
+      try {
+        await updateDoc(doc(STATE.db, 'messages', btn.dataset.delMsg), {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedById: STATE.currentMember?.id,
+        });
+      } catch (err) {
+        toast('Gagal hapus: ' + err.message, 'error');
+      }
+    });
+  });
+
+  // Auto-scroll ke bawah
+  requestAnimationFrame(() => { root.scrollTop = root.scrollHeight; });
+}
+
+function bindChatPage() {
+  const input = document.getElementById('chat-input');
+  const btn = document.getElementById('chat-send-btn');
+  if (!input || !btn) return;
+
+  // Auto-resize textarea
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(120, input.scrollHeight) + 'px';
+  });
+
+  async function sendMsg() {
+    const text = input.value.trim();
+    if (!text) return;
+    const me = STATE.currentMember;
+    if (!me) return;
+    btn.disabled = true;
+    try {
+      await addDoc(collection(STATE.db, 'messages'), {
+        text,
+        authorId: me.id,
+        authorName: me.name,
+        createdAt: serverTimestamp(),
+      });
+      input.value = '';
+      input.style.height = 'auto';
+      markChatAsRead();
+    } catch (err) {
+      toast('Gagal kirim: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      input.focus();
+    }
+  }
+
+  btn.addEventListener('click', sendMsg);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMsg();
+    }
+  });
+
+  // Focus saat buka chat
+  setTimeout(() => input.focus(), 100);
+}
+
+/* =============================================================
    PROJECT PAGE (menu Tugas Proyek)
    ============================================================= */
 function renderProjectPageHtml() {
@@ -4245,6 +4642,13 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'project' ? 'active' : ''}" data-nav="project">
             <span class="sidebar-nav-icon">📌</span>Tugas Proyek
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'chat' ? 'active' : ''}" data-nav="chat">
+            <span class="sidebar-nav-icon">💬</span>Chat Tim
+            ${(() => {
+              const n = unreadChatCount();
+              return n > 0 ? `<span class="sidebar-nav-badge">${n > 99 ? '99+' : n}</span>` : '';
+            })()}
+          </button>
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
           </button>
@@ -4302,7 +4706,9 @@ function renderMain() {
               ? renderCalendarPageHtml()
               : (STATE.currentView === 'project'
                 ? renderProjectPageHtml()
-                : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))}
+                : (STATE.currentView === 'chat'
+                  ? renderChatPageHtml()
+                  : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))))}
         </div>
       </main>
     </div>
@@ -4385,7 +4791,7 @@ function renderMain() {
       closeSidebarMobile();
       const target = btn.dataset.nav;
       // View switches
-      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project') {
+      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project' || target === 'chat') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -4419,6 +4825,13 @@ function renderMain() {
   if (STATE.currentView === 'project') {
     bindProjectPage();
     renderProjectList();
+  }
+  // Chat view bindings
+  if (STATE.currentView === 'chat') {
+    bindChatPage();
+    renderChatMessages();
+    // Mark as read saat user buka chat
+    markChatAsRead();
   }
 
   // Logout
@@ -4615,10 +5028,12 @@ function renderTaskCard(t) {
     : '';
 
   // Carry-over badge — kalau task dari tanggal lampau, status != done, & lagi lihat "hari ini"
+  // FIX v2.19: task fromTemplate tidak rollover, jadi gak ada carry-over badge buat mereka
   const today = todayStr();
   const isCarryOver = STATE.selectedDate === today
     && t.date && t.date < today
-    && t.status !== 'done';
+    && t.status !== 'done'
+    && !t.fromTemplateId;
   const carryoverHtml = isCarryOver ? (() => {
     const [y, m, d] = t.date.split('-');
     return `<span class="carryover-badge">⏪ Carry-over dari ${d}/${m}</span>`;
