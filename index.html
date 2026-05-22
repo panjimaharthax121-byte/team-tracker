@@ -926,6 +926,26 @@
     margin-bottom: 6px;
   }
 
+  /* === PROJECT BADGE === */
+  .project-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: #ede9fe;
+    color: #6b21a8;
+    margin-bottom: 6px;
+    margin-right: 4px;
+    font-family: var(--font-mono);
+  }
+  .project-badge.overdue {
+    background: var(--danger-light);
+    color: #991b1b;
+  }
+
   /* === SHARED TASK BADGE === */
   .shared-badge {
     display: inline-flex;
@@ -2122,12 +2142,13 @@ const CATEGORIES = [
 ];
 
 // Labels default — auto-seed saat first init kalau labels masih kosong
+// Priority: angka kecil = prioritas tinggi (di-sort dulu di kanban)
 const DEFAULT_LABELS = [
-  { name: 'Segera',     color: '#dc2626' },
-  { name: 'Harian',     color: '#2563eb' },
-  { name: 'Mingguan',   color: '#c87f1f' },
-  { name: 'Bulanan',    color: '#8b5cf6' },
-  { name: 'Insidental', color: '#64748b' },
+  { name: 'Segera',     color: '#dc2626', priority: 1 },
+  { name: 'Harian',     color: '#2563eb', priority: 2 },
+  { name: 'Mingguan',   color: '#c87f1f', priority: 3 },
+  { name: 'Bulanan',    color: '#8b5cf6', priority: 4 },
+  { name: 'Insidental', color: '#64748b', priority: 5 },
 ];
 
 // Password gate — ganti hash di bawah kalau mau ganti password.
@@ -2138,7 +2159,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2733,7 +2754,8 @@ function subscribeLabels() {
       try {
         for (const lbl of DEFAULT_LABELS) {
           await addDoc(labelsRef, {
-            name: lbl.name, color: lbl.color, createdAt: serverTimestamp(),
+            name: lbl.name, color: lbl.color, priority: lbl.priority,
+            createdAt: serverTimestamp(),
           });
         }
         // Listener akan refresh otomatis
@@ -2775,15 +2797,56 @@ function switchBoard(boardId) {
   renderMain();
 }
 
+// Sort helper — Label Prioritas → Jam Mulai → Kategori
+function minLabelPriority(task) {
+  const lbls = (task.labelIds || [])
+    .map(id => STATE.labels.find(l => l.id === id))
+    .filter(Boolean);
+  if (lbls.length === 0) return 99;
+  return Math.min(...lbls.map(l => Number(l.priority) || 50));
+}
+function sortKanbanTasks(tasks) {
+  return tasks.slice().sort((a, b) => {
+    // 1. Label priority (smaller = higher priority, urgent dulu)
+    const pa = minLabelPriority(a);
+    const pb = minLabelPriority(b);
+    if (pa !== pb) return pa - pb;
+    // 2. startTime asc — null/empty treated as last
+    const ta = a.startTime || 'zz:zz';
+    const tb = b.startTime || 'zz:zz';
+    if (ta !== tb) return ta.localeCompare(tb);
+    // 3. category index (sesuai urutan CATEGORIES)
+    const ca = CATEGORIES.findIndex(c => c.id === a.category);
+    const cb = CATEGORIES.findIndex(c => c.id === b.category);
+    const cai = ca === -1 ? 99 : ca;
+    const cbi = cb === -1 ? 99 : cb;
+    return cai - cbi;
+  });
+}
+
 // Helper — task yang visible di kanban untuk tanggal aktif
 // Rollover logic: kalau selectedDate == hari ini, task lampau yg belum done OTOMATIS muncul
+// Project logic: task proyek muncul di setiap hari range start..end (status != done)
 function visibleTasks() {
   const today = todayStr();
   const isToday = STATE.selectedDate === today;
+  const sel = STATE.selectedDate;
   return STATE.tasks.filter(t => {
     if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
-    // Selalu tampil kalau tanggalnya tepat
-    if (t.date === STATE.selectedDate) return true;
+    if (t.isDeleted === true) return false; // v2.15: soft-deleted task
+
+    // Tugas Proyek (multi-hari range)
+    if (t.isProject) {
+      const start = t.date;
+      const end = t.dueDate || t.date;
+      if (sel >= start && sel <= end) return true;
+      // Overdue & belum done — tetap muncul di hari ini sebagai reminder
+      if (isToday && sel > end && t.status !== 'done') return true;
+      return false;
+    }
+
+    // Task biasa
+    if (t.date === sel) return true;
     // Rollover: kalau pilih "Hari ini", task lampau yang belum done ikut muncul
     if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
     return false;
@@ -2845,7 +2908,14 @@ async function ensureRecurringTasksForToday() {
     if (!Array.isArray(tpl.items) || tpl.items.length === 0) continue;
 
     let shouldGenerate = false;
-    if (freq === 'daily') shouldGenerate = true;
+    if (freq === 'daily') {
+      // v2.15: cek daysOfWeek kalau ada (default semua hari = backward compat)
+      if (Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0) {
+        shouldGenerate = tpl.daysOfWeek.map(Number).includes(dow);
+      } else {
+        shouldGenerate = true; // backward compat: tidak ada daysOfWeek = setiap hari
+      }
+    }
     else if (freq === 'weekly' && Number(tpl.dayOfWeek) === dow) shouldGenerate = true;
     else if (freq === 'monthly') {
       const target = tpl.dayOfMonth === 'last' ? lastDom : Number(tpl.dayOfMonth);
@@ -2857,6 +2927,7 @@ async function ensureRecurringTasksForToday() {
     const assignee = STATE.members.find(m => m.id === assigneeId);
     if (!assignee) continue;
     const category = tpl.defaultCategoryId || 'b2c';
+    const isShared = tpl.defaultIsShared === true; // v2.15: apply default shared dari template
 
     // Generate task per item dengan DETERMINISTIC doc ID (anti-duplicate even race)
     for (let idx = 0; idx < tpl.items.length; idx++) {
@@ -2886,6 +2957,7 @@ async function ensureRecurringTasksForToday() {
           date: today,
           dueDate: null,
           assigneeId, assigneeName: assignee.name,
+          isShared,
           boardId: STATE.currentBoardId,
           category,
           labelIds: [],
@@ -3272,7 +3344,8 @@ function renderRecapPageHtml() {
 
 function getFilteredRecapTasks() {
   const rf = STATE.recapFilters;
-  let tasks = STATE.tasks.filter(t => (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId);
+  let tasks = STATE.tasks.filter(t =>
+    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId && t.isDeleted !== true);
   if (rf.from) tasks = tasks.filter(t => (t.date || '') >= rf.from);
   if (rf.to) tasks = tasks.filter(t => (t.date || '') <= rf.to);
   if (rf.status === 'unfinished') tasks = tasks.filter(t => t.status !== 'done');
@@ -3345,9 +3418,9 @@ function exportRecapData() {
   const tasks = getFilteredRecapTasks();
   if (tasks.length === 0) { toast('Tidak ada data untuk export', 'error'); return; }
   const header = [
-    'Tanggal', 'Kategori', 'Judul', 'Deskripsi', 'Pelaksana', 'Bersama',
+    'Tanggal', 'Kategori', 'Judul', 'Deskripsi', 'Pelaksana', 'Bersama', 'Proyek',
     'Status', 'Progress %', 'Target', 'Terlaksana',
-    'Jam Mulai', 'Jam Selesai', 'Deadline',
+    'Jam Mulai', 'Jam Selesai', 'Tanggal Selesai/Deadline',
     'Label', 'Dari Template', 'Dibuat', 'Diubah',
   ];
   const rows = tasks.map(t => {
@@ -3362,6 +3435,7 @@ function exportRecapData() {
       t.description || '',
       t.assigneeName || '',
       t.isShared ? 'Ya' : '',
+      t.isProject ? 'Ya' : '',
       (t.status || '').toUpperCase(),
       `${t.progress || 0}%`,
       t.target || '',
@@ -3550,10 +3624,16 @@ function renderCalendarPageHtml() {
 }
 
 function getTasksForDate(dateStr) {
-  return STATE.tasks.filter(t =>
-    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
-    && t.date === dateStr
-  );
+  return STATE.tasks.filter(t => {
+    if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
+    if (t.isDeleted === true) return false; // v2.15: soft-deleted
+    // Task biasa: match date exact
+    if (!t.isProject) return t.date === dateStr;
+    // Task proyek: include kalau dateStr ada di range start..end
+    const start = t.date;
+    const end = t.dueDate || t.date;
+    return dateStr >= start && dateStr <= end;
+  });
 }
 
 function renderCalendarGrid() {
@@ -4028,6 +4108,9 @@ function renderKanban() {
     }
   }
 
+  // Sort: Label Prioritas → Jam Mulai → Kategori
+  filtered = sortKanbanTasks(filtered);
+
   const cols = [
     { key: 'todo', label: 'Todo', icon: '○' },
     { key: 'proses', label: 'Proses', icon: '◐' },
@@ -4161,6 +4244,28 @@ function renderTaskCard(t) {
     ? `<span class="shared-badge" title="Tugas bersama — semua anggota tim bisa update">👥 Bersama</span>`
     : '';
 
+  // Project badge — tugas multi-hari
+  let projectHtml = '';
+  if (t.isProject) {
+    const start = t.date;
+    const end = t.dueDate || t.date;
+    const fmtRange = (() => {
+      const monthsId = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+      const [, sm, sd] = start.split('-');
+      const [, em, ed] = end.split('-');
+      if (sm === em) return `${parseInt(sd)}–${parseInt(ed)} ${monthsId[parseInt(sm)-1]}`;
+      return `${parseInt(sd)} ${monthsId[parseInt(sm)-1]} – ${parseInt(ed)} ${monthsId[parseInt(em)-1]}`;
+    })();
+    // Sisa hari
+    const todayDate = new Date(todayStr() + 'T00:00:00');
+    const endDate = new Date(end + 'T00:00:00');
+    const daysLeft = Math.round((endDate - todayDate) / (1000 * 60 * 60 * 24));
+    const isOverdue = daysLeft < 0;
+    const sisaTxt = isOverdue ? `lewat ${Math.abs(daysLeft)}h`
+      : (daysLeft === 0 ? 'hari ini' : `${daysLeft}h lagi`);
+    projectHtml = `<span class="project-badge ${isOverdue ? 'overdue' : ''}" title="Tugas proyek ${fmtRange}">📌 Proyek ${fmtRange} · ${sisaTxt}</span>`;
+  }
+
   // Frequency badge — kalau task ter-generate dari template recurring
   let freqHtml = '';
   if (t.fromTemplateId) {
@@ -4241,7 +4346,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
-        ${carryoverHtml}${sharedHtml}${freqHtml}
+        ${carryoverHtml}${projectHtml}${sharedHtml}${freqHtml}
         ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
@@ -4318,6 +4423,7 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialStartTime = task?.startTime ?? presets.startTime ?? '';
   const initialEndTime = task?.endTime ?? presets.endTime ?? '';
   const initialIsShared = task?.isShared === true || presets.isShared === true;
+  const initialIsProject = task?.isProject === true || presets.isProject === true;
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -4419,14 +4525,35 @@ function openTaskModal(taskId = null, presets = {}) {
         ${renderProgressControl(task?.progress ?? presets.progress ?? 0, initialTarget, initialProgressCount, readOnly)}
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label class="label">Pelaksana ${initialIsShared ? '<span style="color:var(--text-muted);font-weight:400">(opsional kalau bersama)</span>' : ''}</label>
+        <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
+      </div>
+
+      <!-- Tugas Proyek toggle -->
+      <div class="form-group" style="padding:12px 14px;background:${initialIsProject ? '#ede9fe' : 'var(--bg-col)'};border-radius:var(--radius);transition:background .2s" id="t-project-wrap">
+        <label style="display:flex;align-items:center;gap:10px;cursor:${readOnly ? 'default' : 'pointer'};font-weight:600;font-size:13px">
+          <input type="checkbox" id="t-project" ${initialIsProject ? 'checked' : ''} ${readOnly ? 'disabled' : ''} style="width:16px;height:16px;cursor:inherit;accent-color:#6b21a8">
+          📌 Tugas Proyek (multi-hari)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:26px">
+          Kalau dicentang, task muncul di kanban setiap hari dalam range Tanggal Mulai - Tanggal Selesai (kecuali sudah done).
+        </div>
+      </div>
+
+      <!-- Tanggal: 2 mode — single date (task biasa) ATAU range (proyek) -->
+      <div id="t-date-single-wrap" class="form-group" style="display:${initialIsProject ? 'none' : 'block'}">
+        <label class="label">Tanggal Aktif</label>
+        <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
+      </div>
+      <div id="t-date-range-wrap" style="display:${initialIsProject ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
-          <label class="label">Pelaksana ${initialIsShared ? '<span style="color:var(--text-muted);font-weight:400">(opsional kalau bersama)</span>' : ''}</label>
-          <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
+          <label class="label">📆 Tanggal Mulai</label>
+          <input type="date" id="t-date-range" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
         </div>
         <div class="form-group">
-          <label class="label">Tanggal Aktif</label>
-          <input type="date" id="t-date" class="input" value="${task?.date || STATE.selectedDate}" ${disabledAttr}>
+          <label class="label">📆 Tanggal Selesai</label>
+          <input type="date" id="t-due-range" class="input" value="${initialDueDate || task?.date || STATE.selectedDate}" ${disabledAttr}>
         </div>
       </div>
 
@@ -4440,7 +4567,7 @@ function openTaskModal(taskId = null, presets = {}) {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div id="t-jam-deadline-grid" style="display:grid;grid-template-columns:${initialIsProject ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">
         <div class="form-group">
           <label class="label">Jam Mulai (opsional)</label>
           <input type="time" id="t-start-time" class="input" value="${initialStartTime}" ${disabledAttr}>
@@ -4449,7 +4576,7 @@ function openTaskModal(taskId = null, presets = {}) {
           <label class="label">Jam Selesai (opsional)</label>
           <input type="time" id="t-end-time" class="input" value="${initialEndTime}" ${disabledAttr}>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="t-due-single-wrap" style="display:${initialIsProject ? 'none' : 'block'}">
           <label class="label">Deadline (opsional)</label>
           <input type="date" id="t-due" class="input" value="${initialDueDate}" ${disabledAttr}>
         </div>
@@ -4477,7 +4604,7 @@ function openTaskModal(taskId = null, presets = {}) {
     return;
   }
 
-  // Mutable state untuk modal (labels, checklists, category, target/counter, shared)
+  // Mutable state untuk modal (labels, checklists, category, target/counter, shared, project)
   const MODAL_STATE = {
     labelIds: [...initialLabelIds],
     checklists: JSON.parse(JSON.stringify(initialChecklists)),
@@ -4485,6 +4612,7 @@ function openTaskModal(taskId = null, presets = {}) {
     target: initialTarget,
     progressCount: initialProgressCount,
     isShared: initialIsShared,
+    isProject: initialIsProject,
   };
 
   // Bind progress + target counter (slider/counter switch berdasarkan target value)
@@ -4505,6 +4633,37 @@ function openTaskModal(taskId = null, presets = {}) {
     });
   }
 
+  // Bind project checkbox — toggle date single ↔ range
+  const projectCb = document.getElementById('t-project');
+  const projectWrap = document.getElementById('t-project-wrap');
+  const dateSingleWrap = document.getElementById('t-date-single-wrap');
+  const dateRangeWrap = document.getElementById('t-date-range-wrap');
+  const dueSingleWrap = document.getElementById('t-due-single-wrap');
+  const jamDeadlineGrid = document.getElementById('t-jam-deadline-grid');
+  if (projectCb && !readOnly) {
+    projectCb.addEventListener('change', () => {
+      MODAL_STATE.isProject = projectCb.checked;
+      const on = projectCb.checked;
+      if (projectWrap) projectWrap.style.background = on ? '#ede9fe' : 'var(--bg-col)';
+      if (dateSingleWrap) dateSingleWrap.style.display = on ? 'none' : 'block';
+      if (dateRangeWrap) dateRangeWrap.style.display = on ? 'grid' : 'none';
+      if (dueSingleWrap) dueSingleWrap.style.display = on ? 'none' : 'block';
+      if (jamDeadlineGrid) jamDeadlineGrid.style.gridTemplateColumns = on ? '1fr 1fr' : '1fr 1fr 1fr';
+      // Sync values between single & range inputs
+      if (on) {
+        const dRange = document.getElementById('t-date-range');
+        const dueRange = document.getElementById('t-due-range');
+        const dSingle = document.getElementById('t-date');
+        if (dRange && dSingle && !dRange.value) dRange.value = dSingle.value;
+        if (dueRange && dRange && !dueRange.value) dueRange.value = dRange.value;
+      } else {
+        const dSingle = document.getElementById('t-date');
+        const dRange = document.getElementById('t-date-range');
+        if (dSingle && dRange && dRange.value) dSingle.value = dRange.value;
+      }
+    });
+  }
+
   document.getElementById('t-save').addEventListener('click', async () => {
     const title = document.getElementById('t-title').value.trim();
     const desc = document.getElementById('t-desc').value.trim();
@@ -4518,8 +4677,19 @@ function openTaskModal(taskId = null, presets = {}) {
       : sliderProgress;
     let status = progressToStatus(progress);
     const assigneeId = document.getElementById('t-assignee').value;
-    const date = document.getElementById('t-date').value;
-    const dueDate = document.getElementById('t-due').value || null;
+    const isProject = !!MODAL_STATE.isProject;
+    // Date logic: kalau project, pakai range; else pakai single + optional dueDate
+    let date, dueDate;
+    if (isProject) {
+      date = document.getElementById('t-date-range').value;
+      dueDate = document.getElementById('t-due-range').value || date;
+      if (dueDate < date) {
+        toast('Tanggal Selesai harus >= Tanggal Mulai', 'error'); return;
+      }
+    } else {
+      date = document.getElementById('t-date').value;
+      dueDate = document.getElementById('t-due').value || null;
+    }
     const startTime = document.getElementById('t-start-time').value || null;
     const endTime = document.getElementById('t-end-time').value || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
@@ -4545,6 +4715,7 @@ function openTaskModal(taskId = null, presets = {}) {
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
+          isProject: !!isProject,
           category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
           checklists: MODAL_STATE.checklists,
@@ -4565,6 +4736,7 @@ function openTaskModal(taskId = null, presets = {}) {
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
+          isProject: !!isProject,
           boardId: STATE.currentBoardId,
           category: MODAL_STATE.category,
           labelIds: MODAL_STATE.labelIds,
@@ -4591,9 +4763,24 @@ function openTaskModal(taskId = null, presets = {}) {
     const delBtn = document.getElementById('t-delete');
     if (delBtn) {
       delBtn.addEventListener('click', async () => {
-        if (!confirm(`Hapus tugas "${task.title}"?`)) return;
+        const isFromTemplate = !!task.fromTemplateId;
+        const confirmMsg = isFromTemplate
+          ? `Hapus tugas "${task.title}"?\n\n📌 Task ini dari template auto-harian. Hapus akan tandai task ini terhapus untuk HARI INI saja — template tetap generate task untuk hari berikutnya.`
+          : `Hapus tugas "${task.title}"?`;
+        if (!confirm(confirmMsg)) return;
         try {
-          await deleteDoc(doc(STATE.db, 'tasks', task.id));
+          if (isFromTemplate) {
+            // SOFT DELETE — supaya gak re-generate setelah refresh
+            await updateDoc(doc(STATE.db, 'tasks', task.id), {
+              isDeleted: true,
+              deletedAt: serverTimestamp(),
+              deletedById: STATE.currentMember.id,
+              deletedByName: STATE.currentMember.name,
+            });
+          } else {
+            // Hard delete untuk task manual non-template
+            await deleteDoc(doc(STATE.db, 'tasks', task.id));
+          }
           toast('Tugas dihapus', 'success');
           closeModal();
         } catch (err) {
@@ -4678,6 +4865,30 @@ function bindChecklistEditor(state, readOnly) {
       input.addEventListener('input', () => {
         const [ci, ii] = input.dataset.itemText.split('.').map(Number);
         state.checklists[ci].items[ii].text = input.value;
+      });
+      // PASTE handler — kalau multi-line, auto-split jadi multiple items
+      input.addEventListener('paste', (e) => {
+        const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+        if (!/[\r\n]/.test(text)) return; // single line — biarkan default
+        e.preventDefault();
+        const [ci, ii] = input.dataset.itemText.split('.').map(Number);
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) return;
+        const items = state.checklists[ci].items;
+        // Line 0: replace current item (kalau ada cursor selection, gunakan saja line 0 full)
+        items[ii].text = lines[0];
+        // Line 1..N: insert items baru setelah current
+        for (let k = 1; k < lines.length; k++) {
+          items.splice(ii + k, 0, { id: uid(), text: lines[k], done: false });
+        }
+        refresh();
+        // Focus item terakhir yang baru di-insert
+        setTimeout(() => {
+          const inputs = root.querySelectorAll(`[data-cl-idx="${ci}"] [data-item-text]`);
+          const lastIdx = ii + lines.length - 1;
+          if (inputs[lastIdx]) inputs[lastIdx].focus();
+        }, 50);
+        toast(`${lines.length} item ditambahkan dari paste`, 'success');
       });
     });
     // Edit checklist title
@@ -5543,16 +5754,21 @@ function openLabelsModal() {
     `<button type="button" class="color-swatch ${i === 0 ? 'active' : ''}" style="background:${p.value};color:${p.value}" data-new-label-color="${p.value}" title="${p.name}"></button>`
   ).join('');
 
-  const list = STATE.labels.map(l => {
+  // Sort labels by priority asc untuk preview di list
+  const sortedLabels = STATE.labels.slice().sort((a, b) =>
+    (Number(a.priority) || 50) - (Number(b.priority) || 50));
+  const list = sortedLabels.map(l => {
     const taskCount = STATE.tasks.filter(t => (t.labelIds || []).includes(l.id)).length;
+    const pri = Number(l.priority) || 50;
     return `
       <div class="member-row">
         <span class="label-chip" style="background:${l.color}">${escapeHtml(l.name)}</span>
         <div class="member-info">
-          <div class="member-meta">${taskCount} task pada tanggal aktif</div>
+          <div class="member-meta">${taskCount} task · prioritas <strong>${pri}</strong> ${pri <= 5 ? '🔥' : ''}</div>
         </div>
         <div class="member-actions">
           ${canEdit ? `
+            <button class="btn btn-secondary btn-sm" data-priority-label="${l.id}">Prioritas</button>
             <button class="btn btn-secondary btn-sm" data-rename-label="${l.id}">Rename</button>
             <button class="btn btn-danger btn-sm" data-del-label="${l.id}">Hapus</button>
           ` : ''}
@@ -5604,7 +5820,7 @@ function openLabelsModal() {
     if (!name) { toast('Nama label wajib diisi', 'error'); return; }
     try {
       await addDoc(collection(STATE.db, 'boards', STATE.currentBoardId, 'labels'), {
-        name, color: selectedColor, createdAt: serverTimestamp(),
+        name, color: selectedColor, priority: 50, createdAt: serverTimestamp(),
       });
       toast(`Label "${name}" dibuat`, 'success');
       closeModal();
@@ -5612,6 +5828,25 @@ function openLabelsModal() {
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
     }
+  });
+
+  document.querySelectorAll('[data-priority-label]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.priorityLabel;
+      const l = STATE.labels.find(x => x.id === id);
+      const cur = Number(l.priority) || 50;
+      const input = prompt(`Set prioritas label "${l.name}" (1 = paling tinggi, 99 = paling rendah):\nDefault tim:\n  Segera=1, Harian=2, Mingguan=3, Bulanan=4, Insidental=5`, cur);
+      if (input === null) return;
+      const num = parseInt(input, 10);
+      if (isNaN(num) || num < 1 || num > 99) { toast('Angka 1-99 saja', 'error'); return; }
+      try {
+        await updateDoc(doc(STATE.db, 'boards', STATE.currentBoardId, 'labels', id), { priority: num });
+        toast(`Prioritas ${l.name} = ${num}`, 'success');
+        setTimeout(openLabelsModal, 200);
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    });
   });
 
   document.querySelectorAll('[data-rename-label]').forEach(btn => {
@@ -5660,12 +5895,20 @@ function openTemplatesModal() {
     weekly: { txt: '📆 Mingguan', color: '#2563eb' },
     monthly: { txt: '📅 Bulanan', color: '#c87f1f' },
   };
+  const dowNames = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
   const list = STATE.templates.map(t => {
     const freq = t.frequency || 'manual';
     const fl = freqLabel[freq] || freqLabel.manual;
     const itemCount = (t.items || []).length || (t.title ? 1 : 0);
     const assignee = STATE.members.find(m => m.id === t.defaultAssigneeId);
     const isInactive = t.active === false;
+    // Day-of-week badge
+    const dowArr = Array.isArray(t.daysOfWeek) ? t.daysOfWeek.map(Number) : [0,1,2,3,4,5,6];
+    let dowText = '';
+    if (dowArr.length === 7) dowText = 'Setiap hari';
+    else if (dowArr.length === 5 && [1,2,3,4,5].every(d => dowArr.includes(d))) dowText = 'Sen-Jum';
+    else dowText = dowArr.sort((a,b) => (a===0?7:a) - (b===0?7:b)).map(d => dowNames[d]).join('·');
+    const sharedNote = t.defaultIsShared ? ' · <span style="color:#15803d;font-weight:600">👥 Bersama</span>' : '';
     return `
       <div class="member-row" style="${isInactive ? 'opacity:0.6' : ''}">
         <div class="member-info">
@@ -5675,7 +5918,7 @@ function openTemplatesModal() {
             ${isInactive ? '<span style="font-size:11px;padding:2px 8px;border-radius:100px;background:var(--bg-col);color:var(--text-light);margin-left:4px">Nonaktif</span>' : ''}
           </div>
           <div class="member-meta">
-            ${itemCount} item tugas${assignee ? ` · default ke ${escapeHtml(assignee.name)}` : ''}
+            🗓️ ${dowText} · ${itemCount} item${assignee ? ` · ke ${escapeHtml(assignee.name)}` : ''}${sharedNote}
           </div>
         </div>
         <div class="member-actions">
@@ -5810,12 +6053,14 @@ function openTemplateEditor(tplId) {
     }));
   }
 
-  const freq = tpl?.frequency || 'manual';
-  const dayOfWeek = tpl?.dayOfWeek ?? 1; // default Senin
-  const dayOfMonth = tpl?.dayOfMonth ?? 1;
+  const freq = tpl?.frequency || 'daily';
   const defaultAssigneeId = tpl?.defaultAssigneeId || '';
   const defaultCategoryId = tpl?.defaultCategoryId || '';
   const isActive = tpl?.active !== false;
+  // Days of week: array of 0-6. Default semua hari (= setiap hari) kalau gak di-set.
+  const initialDaysOfWeek = Array.isArray(tpl?.daysOfWeek) && tpl.daysOfWeek.length > 0
+    ? tpl.daysOfWeek.map(Number) : [0, 1, 2, 3, 4, 5, 6];
+  const defaultIsShared = tpl?.defaultIsShared === true;
 
   const memberOpts = `<option value="">— Tidak di-set —</option>` + STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}</option>`
@@ -5837,48 +6082,30 @@ function openTemplateEditor(tplId) {
       </div>
 
       <div class="form-group">
-        <label class="label">Frekuensi Auto-Generate</label>
-        <div class="category-select">
-          <button type="button" class="category-option ${freq === 'manual' ? 'active' : ''}" data-freq="manual" style="color:var(--text-muted)">
-            <div class="category-option-name">Manual</div>
-            <div class="category-option-desc">Pakai saat buat task baru aja</div>
-          </button>
-          <button type="button" class="category-option ${freq === 'daily' ? 'active' : ''}" data-freq="daily" style="color:#dc2626">
-            <div class="category-option-name">Harian</div>
-            <div class="category-option-desc">Auto setiap hari</div>
-          </button>
-          <button type="button" class="category-option ${freq === 'weekly' ? 'active' : ''}" data-freq="weekly" style="color:#2563eb">
-            <div class="category-option-name">Mingguan</div>
-            <div class="category-option-desc">Auto setiap minggu</div>
-          </button>
-          <button type="button" class="category-option ${freq === 'monthly' ? 'active' : ''}" data-freq="monthly" style="color:#c87f1f">
-            <div class="category-option-name">Bulanan</div>
-            <div class="category-option-desc">Auto setiap bulan</div>
-          </button>
+        <label class="label">Auto-Generate di Hari</label>
+        <div class="chip-row" id="tpl-dow-chips" style="gap:6px;flex-wrap:wrap">
+          ${[
+            { i: 1, name: 'Sen' },
+            { i: 2, name: 'Sel' },
+            { i: 3, name: 'Rab' },
+            { i: 4, name: 'Kam' },
+            { i: 5, name: 'Jum' },
+            { i: 6, name: 'Sab' },
+            { i: 0, name: 'Min' },
+          ].map(d => `
+            <button type="button" class="chip ${initialDaysOfWeek.includes(d.i) ? 'active' : ''}"
+              data-tpl-dow="${d.i}"
+              style="min-width:50px;justify-content:center">${d.name}</button>
+          `).join('')}
         </div>
-      </div>
-
-      <div class="form-group" id="tpl-day-of-week-wrap" style="display:${freq === 'weekly' ? 'block' : 'none'}">
-        <label class="label">Hari dalam Minggu</label>
-        <select id="tpl-day-of-week" class="select">
-          <option value="1" ${dayOfWeek === 1 ? 'selected' : ''}>Senin</option>
-          <option value="2" ${dayOfWeek === 2 ? 'selected' : ''}>Selasa</option>
-          <option value="3" ${dayOfWeek === 3 ? 'selected' : ''}>Rabu</option>
-          <option value="4" ${dayOfWeek === 4 ? 'selected' : ''}>Kamis</option>
-          <option value="5" ${dayOfWeek === 5 ? 'selected' : ''}>Jumat</option>
-          <option value="6" ${dayOfWeek === 6 ? 'selected' : ''}>Sabtu</option>
-          <option value="0" ${dayOfWeek === 0 ? 'selected' : ''}>Minggu</option>
-        </select>
-      </div>
-
-      <div class="form-group" id="tpl-day-of-month-wrap" style="display:${freq === 'monthly' ? 'block' : 'none'}">
-        <label class="label">Tanggal dalam Bulan</label>
-        <select id="tpl-day-of-month" class="select">
-          ${Array.from({length: 31}, (_, i) => i + 1).map(d =>
-            `<option value="${d}" ${dayOfMonth === d ? 'selected' : ''}>Tanggal ${d}</option>`
-          ).join('')}
-          <option value="last" ${dayOfMonth === 'last' ? 'selected' : ''}>Tanggal terakhir bulan</option>
-        </select>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button type="button" class="btn btn-ghost btn-sm" id="tpl-dow-all">Semua hari</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="tpl-dow-weekday">Sen-Jum aja</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="tpl-dow-clear">Kosongkan</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          Pilih hari-hari template akan auto-generate task. Default: setiap hari.
+        </div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -5889,6 +6116,16 @@ function openTemplateEditor(tplId) {
         <div class="form-group">
           <label class="label">Kategori Default</label>
           <select id="tpl-category" class="select">${catOpts}</select>
+        </div>
+      </div>
+
+      <div class="form-group" style="padding:10px 14px;background:${defaultIsShared ? 'var(--success-light)' : 'var(--bg-col)'};border-radius:var(--radius-sm);transition:background .2s" id="tpl-shared-wrap">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px">
+          <input type="checkbox" id="tpl-shared" ${defaultIsShared ? 'checked' : ''} style="width:16px;height:16px;cursor:inherit;accent-color:var(--success)">
+          👥 Default jadi Tugas Bersama
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">
+          Kalau dicentang, task auto-generate dari template ini = tugas bersama (muncul di kanban semua anggota tim).
         </div>
       </div>
 
@@ -5912,9 +6149,49 @@ function openTemplateEditor(tplId) {
     </div>
   `, { size: 'lg' });
 
-  // Mutable items state
+  // Mutable items state + day-of-week selection
   const ITEMS_STATE = { items: [...initialItems] };
-  let selectedFreq = freq;
+  const TPL_STATE = {
+    daysOfWeek: new Set(initialDaysOfWeek),
+    defaultIsShared: defaultIsShared,
+  };
+
+  function refreshDowChips() {
+    document.querySelectorAll('[data-tpl-dow]').forEach(btn => {
+      const i = Number(btn.dataset.tplDow);
+      btn.classList.toggle('active', TPL_STATE.daysOfWeek.has(i));
+    });
+  }
+  document.querySelectorAll('[data-tpl-dow]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = Number(btn.dataset.tplDow);
+      if (TPL_STATE.daysOfWeek.has(i)) TPL_STATE.daysOfWeek.delete(i);
+      else TPL_STATE.daysOfWeek.add(i);
+      refreshDowChips();
+    });
+  });
+  document.getElementById('tpl-dow-all')?.addEventListener('click', () => {
+    TPL_STATE.daysOfWeek = new Set([0,1,2,3,4,5,6]);
+    refreshDowChips();
+  });
+  document.getElementById('tpl-dow-weekday')?.addEventListener('click', () => {
+    TPL_STATE.daysOfWeek = new Set([1,2,3,4,5]);
+    refreshDowChips();
+  });
+  document.getElementById('tpl-dow-clear')?.addEventListener('click', () => {
+    TPL_STATE.daysOfWeek = new Set();
+    refreshDowChips();
+  });
+
+  // Shared toggle
+  const sharedCb = document.getElementById('tpl-shared');
+  const sharedWrap = document.getElementById('tpl-shared-wrap');
+  if (sharedCb) {
+    sharedCb.addEventListener('change', () => {
+      TPL_STATE.defaultIsShared = sharedCb.checked;
+      if (sharedWrap) sharedWrap.style.background = sharedCb.checked ? 'var(--success-light)' : 'var(--bg-col)';
+    });
+  }
 
   function refreshItems() {
     const root = document.getElementById('tpl-items-root');
@@ -5955,17 +6232,6 @@ function openTemplateEditor(tplId) {
     refreshItems();
   });
 
-  // Frequency selector
-  document.querySelectorAll('[data-freq]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      selectedFreq = btn.dataset.freq;
-      document.querySelectorAll('[data-freq]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('tpl-day-of-week-wrap').style.display = selectedFreq === 'weekly' ? 'block' : 'none';
-      document.getElementById('tpl-day-of-month-wrap').style.display = selectedFreq === 'monthly' ? 'block' : 'none';
-    });
-  });
-
   document.getElementById('tpl-save').addEventListener('click', async () => {
     const name = document.getElementById('tpl-name').value.trim();
     if (!name) { toast('Nama template wajib diisi', 'error'); return; }
@@ -5981,19 +6247,20 @@ function openTemplateEditor(tplId) {
       }));
     if (validItems.length === 0) { toast('Minimal 1 item tugas dengan judul', 'error'); return; }
 
-    const dowSel = document.getElementById('tpl-day-of-week');
-    const domSel = document.getElementById('tpl-day-of-month');
-
+    const daysOfWeekArr = Array.from(TPL_STATE.daysOfWeek).sort((a, b) => a - b);
+    if (daysOfWeekArr.length === 0) {
+      toast('Pilih minimal 1 hari (atau klik "Semua hari")', 'error'); return;
+    }
     const data = {
       name,
-      frequency: selectedFreq,
+      frequency: 'daily',  // v2.14: template selalu harian
+      daysOfWeek: daysOfWeekArr, // v2.15: array 0-6, hari mana saja generate
       defaultAssigneeId: document.getElementById('tpl-assignee').value || null,
       defaultCategoryId: document.getElementById('tpl-category').value || null,
+      defaultIsShared: !!TPL_STATE.defaultIsShared,
       active: document.getElementById('tpl-active').checked,
-      dayOfWeek: selectedFreq === 'weekly' ? Number(dowSel.value) : null,
-      dayOfMonth: selectedFreq === 'monthly'
-        ? (domSel.value === 'last' ? 'last' : Number(domSel.value))
-        : null,
+      dayOfWeek: null,
+      dayOfMonth: null,
       items: validItems,
       updatedAt: serverTimestamp(),
     };
@@ -6333,6 +6600,7 @@ function openExportModal() {
               .map(id => STATE.labels.find(l => l.id === id)?.name)
               .filter(Boolean),
             is_shared: !!t.isShared,
+            is_project: !!t.isProject,
             from_template: t.fromTemplateName || null,
             assignee: t.assigneeName,
             created_by: t.createdByName,
