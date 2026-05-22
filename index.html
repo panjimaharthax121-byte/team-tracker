@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.24 — ApotekKu</title>
+<title>Team Tracker v2.25 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -3533,25 +3533,30 @@ function setupMentionPicker(inputEl, opts = {}) {
     render();
   });
 
+  // v2.25: pakai capture phase + stopImmediatePropagation supaya Enter pilih kandidat
+  // tidak ditangkap oleh listener Enter input lain (yang fire sendMsg/submit comment).
   inputEl.addEventListener('keydown', (e) => {
     if (!dropdown || dropdown.style.display === 'none' || candidates.length === 0) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       activeIndex = (activeIndex + 1) % candidates.length;
       render();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       activeIndex = (activeIndex - 1 + candidates.length) % candidates.length;
       render();
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();   // <-- penting, supaya sendMsg() handler gak fire
       pickCandidate(activeIndex);
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       closeDropdown();
     }
-  });
+  }, true); // <-- capture phase, fire dulu sebelum listener lain
 
   inputEl.addEventListener('blur', () => {
     // Delay close supaya klik dropdown bisa fire
@@ -3670,6 +3675,9 @@ function visibleTasks() {
   return STATE.tasks.filter(t => {
     if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
     if (t.isDeleted === true) return false; // v2.15: soft-deleted task
+    // v2.25: task yang ditandai "Tidak Selesai" disembunyikan dari kanban —
+    // pindah ke menu 🚫 Tidak Selesai. Hindari noise di kanban.
+    if (t.notCompleted === true) return false;
 
     // Tugas Proyek (multi-hari range)
     if (t.isProject) {
@@ -4564,8 +4572,13 @@ function bindChatPage() {
     const me = STATE.currentMember;
     if (!me) return;
     btn.disabled = true;
-    // v2.22: detect mentions
+    // v2.22-v2.25: detect mentions + visual feedback
     const { mentionedIds } = parseMentions(text);
+    // v2.25: kasih feedback ke user — kalau ada @ tapi gak match, warn
+    if (text.includes('@') && mentionedIds.length === 0) {
+      const memberList = (STATE.members || []).map(m => m.name).join(', ');
+      console.warn('[mention] @ ditemukan di pesan tapi tidak match member apapun.\nMember yg ada:', memberList);
+    }
     try {
       await addDoc(collection(STATE.db, 'messages'), {
         text,
@@ -4577,6 +4590,13 @@ function bindChatPage() {
       input.value = '';
       input.style.height = 'auto';
       markChatAsRead();
+      // v2.25: konfirmasi visual saat mention sukses
+      if (mentionedIds.length > 0) {
+        const names = mentionedIds
+          .map(id => (STATE.members || []).find(m => m.id === id)?.name)
+          .filter(Boolean).join(', ');
+        if (names) toast(`📌 Mention terkirim ke ${names}`, 'success');
+      }
     } catch (err) {
       toast('Gagal kirim: ' + err.message, 'error');
     } finally {
@@ -4606,7 +4626,8 @@ function renderProjectPageHtml() {
     const all = STATE.tasks.filter(t =>
       t.isProject === true
       && (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
-      && t.isDeleted !== true);
+      && t.isDeleted !== true
+      && t.notCompleted !== true); // v2.25: skip notCompleted dari Tugas Proyek juga
     return {
       all: all.length,
       active: all.filter(t => t.status !== 'done').length,
@@ -4693,6 +4714,7 @@ function renderProjectList() {
     t.isProject === true
     && (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
     && t.isDeleted !== true
+    && t.notCompleted !== true // v2.25: skip notCompleted di project list
   );
   if (filter === 'active') projects = projects.filter(t => t.status !== 'done');
   else if (filter === 'done') projects = projects.filter(t => t.status === 'done');
@@ -4912,7 +4934,12 @@ function renderNotDonePageHtml() {
 
   return `
     <h1 class="page-title">🚫 Tugas Tidak Selesai</h1>
-    <div class="page-subtitle" style="margin-bottom:18px">Review task yang ditandai tidak selesai. Total: <strong>${totalCount}</strong></div>
+    <div class="page-subtitle" style="margin-bottom:18px">
+      Review task yang ditandai tidak selesai. Total: <strong>${totalCount}</strong>.
+      ${STATE.currentMember?.role === 'admin'
+        ? ' Sebagai admin, kamu bisa <strong>Hapus task</strong> atau <strong>Kembalikan ke Kanban</strong>.'
+        : ' Hanya admin yang bisa hapus atau kembalikan task — sampaikan info ke admin kalau ada yang perlu diproses.'}
+    </div>
 
     <div class="filter-row" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;background:var(--bg-col);border-radius:8px;margin-bottom:16px">
       <div class="filter-group">
@@ -4973,6 +5000,10 @@ function renderNotDoneList() {
     return;
   }
 
+  // v2.25: action button "Hapus" & "Kembalikan ke Kanban" hanya untuk admin
+  const me = STATE.currentMember;
+  const isAdmin = me?.role === 'admin';
+
   const rows = tasks.map(t => {
     const cat = CATEGORIES.find(c => c.id === t.category);
     const catBadge = cat ? `<span class="category-badge" style="background:${cat.color}20;color:${cat.color}">${escapeHtml(cat.name)}</span>` : '';
@@ -4997,9 +5028,16 @@ function renderNotDoneList() {
         <div style="background:#fef2f2;border-radius:6px;padding:10px 12px;font-size:13px;color:#991b1b;line-height:1.5">
           <strong>Alasan:</strong> ${escapeHtml(t.kendala || '(tidak ada catatan)')}
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
-          <button class="btn btn-ghost btn-sm" data-stop data-nd-rework="${t.id}">↺ Kerjakan Ulang</button>
-          <button class="btn btn-ghost btn-sm" data-stop data-nd-open="${t.id}">👁️ Buka Detail</button>
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap">
+          ${isAdmin ? `
+            <span style="font-size:11px;color:var(--text-muted);margin-right:auto">🔐 Aksi khusus admin:</span>
+            <button class="btn btn-ghost btn-sm" data-stop data-nd-restore="${t.id}" title="Kembalikan task ke kanban (status TODO)">↺ Kembalikan ke Kanban</button>
+            <button class="btn btn-danger btn-sm" data-stop data-nd-delete="${t.id}" title="Hapus task permanen">🗑️ Hapus Task</button>
+            <button class="btn btn-ghost btn-sm" data-stop data-nd-open="${t.id}">👁️ Detail</button>
+          ` : `
+            <span style="font-size:11px;color:var(--text-muted);margin-right:auto">🔒 Hanya admin yang bisa proses task ini</span>
+            <button class="btn btn-ghost btn-sm" data-stop data-nd-open="${t.id}">👁️ Detail</button>
+          `}
         </div>
       </div>
     `;
@@ -5014,24 +5052,55 @@ function renderNotDoneList() {
       openTaskModal(el.dataset.ndOpen);
     });
   });
-  // Bind rework button
-  root.querySelectorAll('[data-nd-rework]').forEach(btn => {
+
+  // v2.25: Restore to kanban — admin only
+  root.querySelectorAll('[data-nd-restore]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const taskId = btn.dataset.ndRework;
-      if (!confirm('Kerjakan ulang task ini? Status balik ke TODO & flag tidak selesai dihapus.')) return;
+      if (!isAdmin) { toast('Hanya admin yang bisa kembalikan task', 'error'); return; }
+      const taskId = btn.dataset.ndRestore;
+      const t = STATE.tasks.find(x => x.id === taskId);
+      if (!t) return;
+      if (!confirm(`Kembalikan "${t.title}" ke kanban?\n\nStatus balik ke TODO, alasan tidak-selesai dihapus.`)) return;
       try {
         await updateDoc(doc(STATE.db, 'tasks', taskId), {
           notCompleted: false,
           kendala: null,
           notCompletedAt: null,
+          notCompletedBy: null,
           status: 'todo',
           progress: 0,
           updatedAt: serverTimestamp(),
         });
-        toast('Task dikerjakan ulang', 'success');
+        toast('Task dikembalikan ke kanban', 'success');
       } catch (err) {
         toast('Gagal: ' + err.message, 'error');
+      }
+    });
+  });
+
+  // v2.25: Delete permanent — admin only
+  root.querySelectorAll('[data-nd-delete]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!isAdmin) { toast('Hanya admin yang bisa hapus task', 'error'); return; }
+      const taskId = btn.dataset.ndDelete;
+      const t = STATE.tasks.find(x => x.id === taskId);
+      if (!t) return;
+      if (!confirm(`HAPUS PERMANEN task "${t.title}"?\n\nIni tidak bisa di-undo. Lebih baik pilih "Kembalikan ke Kanban" kalau masih perlu.`)) return;
+      try {
+        if (t.fromTemplateId) {
+          // Soft-delete supaya gak ke-generate ulang oleh template
+          await updateDoc(doc(STATE.db, 'tasks', taskId), {
+            isDeleted: true,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await deleteDoc(doc(STATE.db, 'tasks', taskId));
+        }
+        toast('Task dihapus permanen', 'success');
+      } catch (err) {
+        toast('Gagal hapus: ' + err.message, 'error');
       }
     });
   });
@@ -5501,8 +5570,8 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // View switches
-      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project' || target === 'chat') {
+      // v2.25: View switches — include 'notdone' (sebelumnya kelewat)
+      if (target === 'kanban' || target === 'recap' || target === 'calendar' || target === 'project' || target === 'chat' || target === 'notdone') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -6106,18 +6175,24 @@ function openTaskModal(taskId = null, presets = {}) {
 
       ${checklistsSection}
 
-      ${task?.notCompleted ? `
+      ${task?.notCompleted ? (() => {
+        const isAdmin = me?.role === 'admin';
+        return `
         <div class="form-group">
           <label class="label" style="color:var(--danger)">🚫 Tugas Ditandai Tidak Selesai</label>
           <div style="background:#fef2f2;border-left:3px solid #dc2626;padding:10px 12px;border-radius:6px;color:#991b1b;font-size:13px;line-height:1.5">
             <strong>Alasan:</strong> ${escapeHtml(task.kendala || '(tidak ada catatan)')}
             ${task.notCompletedAt ? `<div style="font-size:11px;color:#7f1d1d;margin-top:6px">Ditandai pada ${new Date(task.notCompletedAt).toLocaleString('id-ID')}</div>` : ''}
             <div style="margin-top:8px">
-              <button class="btn btn-sm btn-ghost" id="t-clear-notdone" type="button" ${disabledAttr}>↺ Kerjakan Ulang</button>
+              ${isAdmin
+                ? `<button class="btn btn-sm btn-ghost" id="t-clear-notdone" type="button" ${disabledAttr}>↺ Kembalikan ke Kanban</button>`
+                : `<div style="font-size:11px;color:#7f1d1d;font-style:italic">🔒 Hanya admin yang bisa kembalikan task ini ke kanban.</div>`
+              }
             </div>
           </div>
         </div>
-      ` : ''}
+        `;
+      })() : ''}
 
       ${isEdit ? renderTaskMetaInfo(task) : ''}
       ${isEdit ? renderActivitySection(task) : ''}
@@ -6913,13 +6988,26 @@ function bindCommentForm(task) {
       mentions: mentionedIds,
       createdAt: new Date().toISOString(),
     };
+    // v2.25: warn kalau @ ada tapi gak match
+    if (text.includes('@') && mentionedIds.length === 0) {
+      const memberList = (STATE.members || []).map(m => m.name).join(', ');
+      console.warn('[mention] @ ditemukan di comment tapi tidak match member apapun.\nMember yg ada:', memberList);
+    }
     try {
       await updateDoc(doc(STATE.db, 'tasks', task.id), {
         comments: arrayUnion(newComment),
         updatedAt: serverTimestamp(),
       });
       input.value = '';
-      toast('Comment terkirim', 'success');
+      // v2.25: feedback mention sukses
+      if (mentionedIds.length > 0) {
+        const names = mentionedIds
+          .map(id => (STATE.members || []).find(m => m.id === id)?.name)
+          .filter(Boolean).join(', ');
+        toast(`Comment terkirim · 📌 Mention ke ${names}`, 'success');
+      } else {
+        toast('Comment terkirim', 'success');
+      }
       // Re-render comments via state refresh — listener will update
       // But also update local task for immediate UX
       task.comments = [...(task.comments || []), newComment];
@@ -7086,8 +7174,11 @@ function openMarkNotDoneModal(task) {
       };
       update.activity = [...(task.activity || []), newAct];
       await updateDoc(doc(STATE.db, 'tasks', task.id), update);
-      toast('Task ditandai tidak selesai', 'success');
+      toast('Task ditandai tidak selesai · pindah ke menu 🚫 Tidak Selesai', 'success');
       closeModal();
+      // v2.25: auto-redirect user ke menu Tidak Selesai biar langsung lihat task-nya
+      STATE.currentView = 'notdone';
+      renderMain();
     } catch (err) {
       submitBtn.disabled = false;
       toast('Gagal: ' + err.message, 'error');
