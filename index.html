@@ -912,6 +912,121 @@
     margin-top: 2px;
   }
 
+  /* === TIME TRACKER === */
+  .time-tracker-box {
+    background: var(--bg-col);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+  }
+  .time-tracker-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .time-tracker-display {
+    flex: 1;
+    min-width: 140px;
+  }
+  .time-tracker-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 2px;
+  }
+  .time-tracker-total {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .time-tracker-running {
+    color: var(--success);
+    animation: pulse-time 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-time {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .time-tracker-sessions {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text-muted);
+    max-height: 100px;
+    overflow-y: auto;
+  }
+  .time-tracker-session {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+  }
+  .time-badge-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  /* === MENTION HIGHLIGHT === */
+  .mention {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--primary-light);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 0.95em;
+  }
+  .chat-msg.mine .mention {
+    background: rgba(255,255,255,0.25);
+    color: white;
+  }
+
+  /* === KENDALA BADGE === */
+  .kendala-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 10.5px;
+    font-weight: 700;
+    background: var(--danger-light);
+    color: #991b1b;
+    margin-bottom: 6px;
+    margin-right: 4px;
+  }
+  .kendala-box {
+    padding: 12px 14px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 3px solid var(--danger);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+  }
+  .kendala-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #991b1b;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 4px;
+  }
+  .kendala-text {
+    font-size: 13px;
+    color: #7f1d1d;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
   /* === CARRY-OVER BADGE === */
   .carryover-badge {
     display: inline-flex;
@@ -2397,6 +2512,10 @@ const STATE = {
   notifSettings: null,    // di-init dari localStorage
   currentView: 'kanban', // 'kanban' | 'recap' | 'calendar' | 'project' | 'chat'
   projectFilter: 'active', // 'active' (TODO/PROSES) | 'done' | 'all'
+  projectFilterCategory: null,  // v2.22
+  projectFilterMember: null,    // v2.22 — 'me' | memberId | null
+  projectFilterLabelIds: [],    // v2.22
+  projectSearch: '',            // v2.22
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -3201,15 +3320,20 @@ function subscribeMessages() {
         // Skip kalau ke-create di masa lalu (initial load late)
         const createdMs = m.createdAt?.toMillis?.() || 0;
         if (createdMs < Date.now() - 30000) return; // > 30 detik lalu, skip
-        showAppNotif(`💬 ${m.authorName || 'Anggota'}`, m.text || '', {
-          type: 'default',
-          icon: '💬',
+        // v2.22: kalau current user di-mention → notif special
+        const meIsMentioned = me && Array.isArray(m.mentions) && m.mentions.includes(me.id);
+        const notifTitle = meIsMentioned
+          ? `📌 ${m.authorName || 'Anggota'} mention kamu`
+          : `💬 ${m.authorName || 'Anggota'}`;
+        showAppNotif(notifTitle, m.text || '', {
+          type: meIsMentioned ? 'start' : 'default',
+          icon: meIsMentioned ? '📌' : '💬',
           onClick: () => {
             STATE.currentView = 'chat';
             renderMain();
           },
         });
-        // v2.20: sound chat pendek (kalau toggle aktif)
+        // Sound chat pendek (kalau toggle aktif)
         playChatSound();
       });
     }
@@ -3248,6 +3372,53 @@ function switchBoard(boardId) {
   subscribeTemplates();
   // subscribeTasks tetap (query by date sama), filtering by board client-side
   renderMain();
+}
+
+// v2.22: @Mention helpers
+// Detect @nama di text → tag dengan <span class="mention">. Plus return mentioned member IDs.
+function parseMentions(rawText) {
+  const text = String(rawText || '');
+  if (!text.includes('@')) return { html: escapeHtml(text), mentionedIds: [] };
+  const members = STATE.members || [];
+  // Sort by length desc supaya "Adit Setiawan" match before "Adit"
+  const memberNames = members.slice().sort((a, b) => (b.name || '').length - (a.name || '').length);
+  const mentionedIds = new Set();
+  let html = escapeHtml(text);
+  // Replace @name dengan span
+  memberNames.forEach(m => {
+    const escName = m.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match @name dengan boundary (space/punct/start/end)
+    const re = new RegExp(`(^|[\\s.,!?])@(${escName})\\b`, 'gi');
+    html = html.replace(re, (match, prefix, nameMatch) => {
+      mentionedIds.add(m.id);
+      return `${prefix}<span class="mention" title="Mention ke ${escapeHtml(m.name)}">@${escapeHtml(nameMatch)}</span>`;
+    });
+  });
+  return { html, mentionedIds: Array.from(mentionedIds) };
+}
+
+// v2.22: Time tracking helpers
+function totalTimeMinutes(task) {
+  const log = task?.timeLog || [];
+  let totalMs = 0;
+  log.forEach(s => {
+    if (s.duration) totalMs += s.duration;
+    else if (s.startedAt && s.endedAt) totalMs += (s.endedAt - s.startedAt);
+  });
+  return Math.round(totalMs / 60000);
+}
+function activeTimerSession(task) {
+  // Find session yang masih open (endedAt null) untuk current user
+  const log = task?.timeLog || [];
+  const me = STATE.currentMember;
+  if (!me) return null;
+  return log.find(s => s.memberId === me.id && s.startedAt && !s.endedAt);
+}
+function fmtMinutes(min) {
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}j ${m}m` : `${h}j`;
 }
 
 // Sort helper — Label Prioritas → Jam Mulai → Kategori
@@ -4130,7 +4301,7 @@ function renderChatMessages() {
             <span class="chat-msg-author">${escapeHtml(m.authorName || '?')}</span>
             <span class="chat-msg-time">${timeStr}</span>
           </div>
-          <div class="chat-msg-text">${isDeleted ? 'Pesan dihapus' : escapeHtml(m.text || '')}</div>
+          <div class="chat-msg-text">${isDeleted ? 'Pesan dihapus' : parseMentions(m.text || '').html}</div>
           ${canDelete ? `<button class="chat-msg-del" data-del-msg="${m.id}" title="Hapus pesan">✕</button>` : ''}
         </div>
       </div>
@@ -4175,11 +4346,14 @@ function bindChatPage() {
     const me = STATE.currentMember;
     if (!me) return;
     btn.disabled = true;
+    // v2.22: detect mentions
+    const { mentionedIds } = parseMentions(text);
     try {
       await addDoc(collection(STATE.db, 'messages'), {
         text,
         authorId: me.id,
         authorName: me.name,
+        mentions: mentionedIds,
         createdAt: serverTimestamp(),
       });
       input.value = '';
@@ -4245,6 +4419,47 @@ function renderProjectPageHtml() {
           Semua (${counts.all})
         </button>
       </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Kategori</span>
+        <button class="chip ${STATE.projectFilterCategory === null ? 'active' : ''}" data-proj-filter-cat="">Semua</button>
+        ${CATEGORIES.map(c => `
+          <button class="chip ${STATE.projectFilterCategory === c.id ? 'active' : ''}" data-proj-filter-cat="${c.id}" style="${STATE.projectFilterCategory === c.id ? `background:${c.color};color:white` : `color:${c.color}`}">${escapeHtml(c.name)}</button>
+        `).join('')}
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-group">
+        <span class="filter-group-label">Pelaksana</span>
+        <button class="chip ${STATE.projectFilterMember === null ? 'active' : ''}" data-proj-filter-member="">Semua</button>
+        <button class="chip ${STATE.projectFilterMember === 'me' ? 'active' : ''}" data-proj-filter-member="me">Punyaku</button>
+        ${STATE.members.filter(m => m.id !== STATE.currentMember?.id).map(m => `
+          <button class="chip ${STATE.projectFilterMember === m.id ? 'active' : ''}" data-proj-filter-member="${m.id}">
+            <span class="chip-avatar" style="background:${colorFor(m.name)}">${escapeHtml(initials(m.name))}</span>
+            ${escapeHtml(m.name)}
+          </button>
+        `).join('')}
+      </div>
+      ${STATE.labels.length > 0 ? `
+        <div class="filter-divider"></div>
+        <div class="filter-group">
+          <span class="filter-group-label">Label</span>
+          ${STATE.labels.map(l => `
+            <button class="label-toggle ${STATE.projectFilterLabelIds.includes(l.id) ? 'active' : ''}"
+              data-proj-filter-label="${l.id}" style="color:${l.color}">
+              <span class="label-dot" style="background:${l.color}"></span>
+              ${escapeHtml(l.name)}
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+      <div class="filter-divider"></div>
+      <div class="filter-group" style="flex:1;min-width:200px">
+        <span class="filter-group-label">Cari</span>
+        <input type="text" id="proj-search" class="input" placeholder="Cari judul/deskripsi..." value="${escapeHtml(STATE.projectSearch || '')}" style="flex:1;padding:6px 12px;font-size:13px">
+      </div>
+      ${(STATE.projectFilterCategory || STATE.projectFilterMember || STATE.projectFilterLabelIds.length > 0 || STATE.projectSearch) ? `
+        <button class="btn btn-ghost btn-sm" id="reset-project-filters">↺ Reset</button>
+      ` : ''}
     </div>
 
     <div id="project-list-root"></div>
@@ -4263,6 +4478,31 @@ function renderProjectList() {
   );
   if (filter === 'active') projects = projects.filter(t => t.status !== 'done');
   else if (filter === 'done') projects = projects.filter(t => t.status === 'done');
+
+  // v2.22: filter tambahan
+  if (STATE.projectFilterCategory) {
+    projects = projects.filter(t => t.category === STATE.projectFilterCategory);
+  }
+  if (STATE.projectFilterMember) {
+    if (STATE.projectFilterMember === 'me') {
+      const meId = STATE.currentMember?.id;
+      projects = projects.filter(t => t.assigneeId === meId || t.isShared === true);
+    } else {
+      projects = projects.filter(t => t.assigneeId === STATE.projectFilterMember);
+    }
+  }
+  if (STATE.projectFilterLabelIds.length > 0) {
+    projects = projects.filter(t =>
+      (t.labelIds || []).some(id => STATE.projectFilterLabelIds.includes(id))
+    );
+  }
+  if (STATE.projectSearch) {
+    const q = STATE.projectSearch.toLowerCase();
+    projects = projects.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q)
+    );
+  }
 
   // Sort: status active (todo/proses) dulu, lalu by date asc (project starting soonest first)
   projects.sort((a, b) => {
@@ -4380,6 +4620,54 @@ function bindProjectPage() {
       renderMain();
     });
   });
+  // v2.22: filter kategori
+  document.querySelectorAll('[data-proj-filter-cat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.projFilterCat;
+      STATE.projectFilterCategory = v === '' ? null : v;
+      renderMain();
+    });
+  });
+  // v2.22: filter pelaksana
+  document.querySelectorAll('[data-proj-filter-member]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.projFilterMember;
+      STATE.projectFilterMember = v === '' ? null : v;
+      renderMain();
+    });
+  });
+  // v2.22: filter label (toggle)
+  document.querySelectorAll('[data-proj-filter-label]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.projFilterLabel;
+      const idx = STATE.projectFilterLabelIds.indexOf(id);
+      if (idx === -1) STATE.projectFilterLabelIds.push(id);
+      else STATE.projectFilterLabelIds.splice(idx, 1);
+      renderMain();
+    });
+  });
+  // v2.22: search input (debounced)
+  const searchEl = document.getElementById('proj-search');
+  if (searchEl) {
+    let timer = null;
+    searchEl.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        STATE.projectSearch = searchEl.value || '';
+        renderProjectList(); // gak perlu renderMain, cuma list yg refresh
+      }, 250);
+    });
+  }
+  // Reset filter button
+  const resetBtn = document.getElementById('reset-project-filters');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    STATE.projectFilterCategory = null;
+    STATE.projectFilterMember = null;
+    STATE.projectFilterLabelIds = [];
+    STATE.projectSearch = '';
+    renderMain();
+  });
+
   const newBtn = document.getElementById('btn-new-project');
   if (newBtn) newBtn.addEventListener('click', () => openTaskModal(null, { isProject: true }));
 }
@@ -5027,6 +5315,11 @@ function renderTaskCard(t) {
     ? `<span class="shared-badge" title="Tugas bersama — semua anggota tim bisa update">👥 Bersama</span>`
     : '';
 
+  // Kendala badge — kalau ada catatan kendala
+  const kendalaHtml = t.kendala
+    ? `<span class="kendala-badge" title="Ada kendala: ${escapeHtml(t.kendala.slice(0, 100))}">⚠️ Ada Kendala</span>`
+    : '';
+
   // Project badge — tugas multi-hari
   let projectHtml = '';
   if (t.isProject) {
@@ -5087,6 +5380,13 @@ function renderTaskCard(t) {
     ? `<span title="${checklistInfo.done} dari ${checklistInfo.total} checklist selesai">☑️ ${checklistInfo.done}/${checklistInfo.total}</span>`
     : '';
 
+  // Time tracking badge (kalau ada timeLog)
+  const tMin = totalTimeMinutes(t);
+  const tActive = activeTimerSession(t);
+  const trackedTimeBadge = tMin > 0 || tActive
+    ? `<span class="time-badge-card" title="Total waktu yang udah di-track">⏱️ ${tActive ? '⏵ ' : ''}${fmtMinutes(tMin)}</span>`
+    : '';
+
   // Target counter badge — kalau task pakai mode target/counter
   const targetVal = Number(t.target) || 0;
   const progressCount = Number(t.progressCount) || 0;
@@ -5129,7 +5429,7 @@ function renderTaskCard(t) {
   return `
     <div class="task-card col-${status} ${locked ? 'task-locked' : ''}" data-task-id="${t.id}">
       <div class="task-card-body" data-card-body>
-        ${carryoverHtml}${projectHtml}${sharedHtml}${freqHtml}
+        ${carryoverHtml}${projectHtml}${sharedHtml}${freqHtml}${kendalaHtml}
         ${categoryHtml}
         ${labelsHtml}
         <div class="task-card-title">${escapeHtml(t.title)}</div>
@@ -5145,6 +5445,7 @@ function renderTaskCard(t) {
             ${avatarHtml(assigneeName)} ${escapeHtml(assigneeName)}
           </span>
           ${timeBadge}
+          ${trackedTimeBadge}
           ${dueBadge}
           ${targetBadge}
           ${checklistBadge}
@@ -5207,6 +5508,7 @@ function openTaskModal(taskId = null, presets = {}) {
   const initialEndTime = task?.endTime ?? presets.endTime ?? '';
   const initialIsShared = task?.isShared === true || presets.isShared === true;
   const initialIsProject = task?.isProject === true || presets.isProject === true;
+  const initialKendala = task?.kendala || '';
 
   const memberOpts = STATE.members.map(m =>
     `<option value="${m.id}" ${m.id === defaultAssigneeId ? 'selected' : ''}>${escapeHtml(m.name)}${m.role === 'admin' ? ' (admin)' : ''}</option>`
@@ -5308,6 +5610,8 @@ function openTaskModal(taskId = null, presets = {}) {
         ${renderProgressControl(task?.progress ?? presets.progress ?? 0, initialTarget, initialProgressCount, readOnly)}
       </div>
 
+      ${isEdit ? renderTimeTracker(task) : ''}
+
       <div class="form-group">
         <label class="label">Pelaksana ${initialIsShared ? '<span style="color:var(--text-muted);font-weight:400">(opsional kalau bersama)</span>' : ''}</label>
         <select id="t-assignee" class="select" ${canChangeAssignee ? '' : 'disabled'}>${memberOpts}</select>
@@ -5366,6 +5670,14 @@ function openTaskModal(taskId = null, presets = {}) {
       </div>
 
       ${checklistsSection}
+
+      <div class="form-group">
+        <label class="label">⚠️ Kendala (opsional)</label>
+        <textarea id="t-kendala" class="textarea" placeholder="Tulis kendala atau alasan kalau task belum selesai (mis: nunggu supplier, alat rusak, dll). Tim bisa lihat & bantu." ${disabledAttr}>${escapeHtml(initialKendala)}</textarea>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          Isi kalau task ada hambatan — tim & admin bisa lihat & coordinate solusi.
+        </div>
+      </div>
 
       ${isEdit ? renderTaskMetaInfo(task) : ''}
       ${isEdit ? renderActivitySection(task) : ''}
@@ -5475,6 +5787,7 @@ function openTaskModal(taskId = null, presets = {}) {
     }
     const startTime = document.getElementById('t-start-time').value || null;
     const endTime = document.getElementById('t-end-time').value || null;
+    const kendala = document.getElementById('t-kendala').value.trim() || null;
     if (!title) { toast('Judul wajib diisi', 'error'); return; }
     if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
     if (!MODAL_STATE.category) { toast('Pilih kategori tugas (B2C / Online / Optimize)', 'error'); return; }
@@ -5494,7 +5807,7 @@ function openTaskModal(taskId = null, presets = {}) {
       if (isEdit) {
         const update = {
           title, description: desc, status, progress: finalProgress, date, dueDate,
-          startTime, endTime,
+          startTime, endTime, kendala,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
@@ -5515,7 +5828,7 @@ function openTaskModal(taskId = null, presets = {}) {
       } else {
         await addDoc(collection(STATE.db, 'tasks'), {
           title, description: desc, status, progress: finalProgress, date, dueDate,
-          startTime, endTime,
+          startTime, endTime, kendala,
           target, progressCount,
           assigneeId, assigneeName: assignee.name,
           isShared: !!MODAL_STATE.isShared,
@@ -5541,6 +5854,64 @@ function openTaskModal(taskId = null, presets = {}) {
       toast('Gagal simpan: ' + err.message, 'error');
     }
   });
+
+  // v2.22: Time tracker start/stop
+  if (isEdit) {
+    const startBtn = document.getElementById('t-time-start');
+    const stopBtn = document.getElementById('t-time-stop');
+    if (startBtn) {
+      startBtn.addEventListener('click', async () => {
+        const me = STATE.currentMember;
+        if (!me) return;
+        // Stop existing running sessions oleh user lain biar gak duplicate untuk dia
+        const newSession = {
+          id: uid(),
+          memberId: me.id,
+          memberName: me.name,
+          startedAt: Date.now(),
+          endedAt: null,
+        };
+        try {
+          await updateDoc(doc(STATE.db, 'tasks', task.id), {
+            timeLog: arrayUnion(newSession),
+            updatedAt: serverTimestamp(),
+          });
+          toast('Timer dimulai', 'success');
+          // Re-open modal supaya refresh
+          closeModal();
+          setTimeout(() => openTaskModal(task.id), 200);
+        } catch (err) {
+          toast('Gagal mulai timer: ' + err.message, 'error');
+        }
+      });
+    }
+    if (stopBtn) {
+      stopBtn.addEventListener('click', async () => {
+        const me = STATE.currentMember;
+        if (!me) return;
+        const log = (task.timeLog || []).slice();
+        const active = log.find(s => s.memberId === me.id && !s.endedAt);
+        if (!active) { toast('Tidak ada timer aktif', 'error'); return; }
+        // Replace dengan endedAt + duration
+        const endedAt = Date.now();
+        const duration = endedAt - active.startedAt;
+        const updatedLog = log.map(s =>
+          s.id === active.id ? { ...s, endedAt, duration } : s
+        );
+        try {
+          await updateDoc(doc(STATE.db, 'tasks', task.id), {
+            timeLog: updatedLog,
+            updatedAt: serverTimestamp(),
+          });
+          toast(`Timer stop · ${fmtMinutes(Math.round(duration/60000))}`, 'success');
+          closeModal();
+          setTimeout(() => openTaskModal(task.id), 200);
+        } catch (err) {
+          toast('Gagal stop timer: ' + err.message, 'error');
+        }
+      });
+    }
+  }
 
   if (isEdit) {
     const delBtn = document.getElementById('t-delete');
@@ -6002,6 +6373,55 @@ function renderProgressControl(initialProgress, initialTarget, initialCount, rea
   `;
 }
 
+function renderTimeTracker(task) {
+  const total = totalTimeMinutes(task);
+  const active = activeTimerSession(task);
+  const log = task?.timeLog || [];
+  const me = STATE.currentMember;
+  // Only show button kalau user bisa edit task
+  const canTrack = canEditTask(task);
+
+  const sessions = log.slice().reverse().slice(0, 10).map(s => {
+    const dur = s.duration
+      ? Math.round(s.duration / 60000)
+      : (s.startedAt && s.endedAt ? Math.round((s.endedAt - s.startedAt) / 60000) : 0);
+    const startD = s.startedAt ? new Date(s.startedAt) : null;
+    const dateStr = startD ? `${String(startD.getDate()).padStart(2,'0')}/${String(startD.getMonth()+1).padStart(2,'0')} ${String(startD.getHours()).padStart(2,'0')}:${String(startD.getMinutes()).padStart(2,'0')}` : '';
+    return `
+      <div class="time-tracker-session">
+        <span>${escapeHtml(s.memberName || '?')} · ${dateStr}</span>
+        <span style="font-family:var(--font-mono);font-weight:600">${dur > 0 ? fmtMinutes(dur) : (s.endedAt ? '0m' : '⏵ running')}</span>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="form-group">
+      <label class="label">⏱️ Time Tracker</label>
+      <div class="time-tracker-box">
+        <div class="time-tracker-row">
+          <div class="time-tracker-display">
+            <div class="time-tracker-label">Total Waktu</div>
+            <div class="time-tracker-total ${active ? 'time-tracker-running' : ''}">${total > 0 ? fmtMinutes(total) : '—'}${active ? ' (running)' : ''}</div>
+          </div>
+          ${canTrack ? `
+            ${active
+              ? `<button class="btn btn-danger" id="t-time-stop">■ Stop</button>`
+              : `<button class="btn btn-success" id="t-time-start">▶ Mulai</button>`
+            }
+          ` : ''}
+        </div>
+        ${log.length > 0 ? `
+          <div class="time-tracker-sessions">
+            <div class="time-tracker-label" style="margin-bottom:6px">Sessions (${log.length})</div>
+            ${sessions}
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
 function renderTaskMetaInfo(task) {
   const creator = STATE.members.find(m => m.id === task.createdById);
   const creatorName = creator?.name || task.createdByName || '?';
@@ -6029,7 +6449,7 @@ function renderCommentsSection(task) {
             <span class="comment-time">${timeAgo(c.createdAt)}</span>
             ${canDelete ? `<button class="comment-delete" data-stop data-del-comment="${i}">hapus</button>` : ''}
           </div>
-          <div class="comment-text">${escapeHtml(c.text)}</div>
+          <div class="comment-text">${parseMentions(c.text).html}</div>
         </div>
       </div>
     `;
@@ -6060,11 +6480,14 @@ function bindCommentForm(task) {
     const text = input.value.trim();
     if (!text) return;
     const me = STATE.currentMember;
+    // v2.22: parse mentions di comment
+    const { mentionedIds } = parseMentions(text);
     const newComment = {
       id: uid(),
       authorId: me.id,
       authorName: me.name,
       text,
+      mentions: mentionedIds,
       createdAt: new Date().toISOString(),
     };
     try {
