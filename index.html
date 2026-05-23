@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.28 — ApotekKu</title>
+<title>Team Tracker v2.29 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2748,7 +2748,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -3827,12 +3827,11 @@ function visibleTasks() {
 
     // Task biasa
     if (t.date === sel) return true;
-    // Rollover: kalau pilih "Hari ini", task lampau yang belum done ikut muncul.
-    // FIX v2.19: Task dari template (fromTemplateId) TIDAK rollover —
-    // karena template punya jadwal hari spesifik (daysOfWeek) yang udah handle generation.
-    // Contoh: template Rabu, task Rabu gak selesai → hari Kamis JANGAN nongol di kanban.
-    // User bisa lihat task Rabu via date picker = Rabu, atau via menu Rekap/Kalender.
-    if (isToday && t.status !== 'done' && t.date && t.date < today && !t.fromTemplateId) return true;
+    // v2.29: Rollover SEMUA task non-done (termasuk dari template harian).
+    // User aware via badge khusus "🔁 Template kemarin belum eksekusi" vs "🔁 Carry-over dari DD/MM".
+    // (Update dari v2.19: task fromTemplate dulu tidak rollover. User pilih opsi double display
+    //  + label jelas — biar tugas kemarin yg belum dieksekusi tetap terlihat di hari ini.)
+    if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
     return false;
   });
 }
@@ -4328,16 +4327,29 @@ function renderRecapPageHtml() {
       <button class="btn btn-ghost btn-sm" id="recap-reset">↺ Reset</button>
     </div>
 
-    <!-- v2.26: Tab switcher Tabel | Kalender -->
-    <div class="recap-tab-row" style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:14px">
+    <!-- v2.26-v2.29: Tab switcher Tabel | Kalender | Belum Selesai -->
+    <div class="recap-tab-row" style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:14px;flex-wrap:wrap">
       <button class="recap-tab ${activeTab === 'table' ? 'active' : ''}" data-recap-tab="table" style="padding:10px 18px;background:transparent;border:none;border-bottom:3px solid ${activeTab === 'table' ? 'var(--primary)' : 'transparent'};margin-bottom:-2px;cursor:pointer;font-weight:${activeTab === 'table' ? '700' : '500'};color:${activeTab === 'table' ? 'var(--primary)' : 'var(--text-muted)'};font-size:14px;transition:all .15s">
         📊 Tabel
       </button>
       <button class="recap-tab ${activeTab === 'calendar' ? 'active' : ''}" data-recap-tab="calendar" style="padding:10px 18px;background:transparent;border:none;border-bottom:3px solid ${activeTab === 'calendar' ? 'var(--primary)' : 'transparent'};margin-bottom:-2px;cursor:pointer;font-weight:${activeTab === 'calendar' ? '700' : '500'};color:${activeTab === 'calendar' ? 'var(--primary)' : 'var(--text-muted)'};font-size:14px;transition:all .15s">
         📅 Kalender
       </button>
+      ${(() => {
+        const pendingCount = STATE.tasks.filter(t =>
+          (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+          && t.isDeleted !== true
+          && t.notCompleted !== true
+          && t.status !== 'done'
+        ).length;
+        const isActive = activeTab === 'pending';
+        return `<button class="recap-tab ${isActive ? 'active' : ''}" data-recap-tab="pending" style="padding:10px 18px;background:transparent;border:none;border-bottom:3px solid ${isActive ? '#dc2626' : 'transparent'};margin-bottom:-2px;cursor:pointer;font-weight:${isActive ? '700' : '500'};color:${isActive ? '#dc2626' : 'var(--text-muted)'};font-size:14px;transition:all .15s;display:inline-flex;align-items:center;gap:6px">
+          🔥 Belum Selesai
+          ${pendingCount > 0 ? `<span style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;font-family:var(--font-mono);min-width:22px;text-align:center">${pendingCount}</span>` : ''}
+        </button>`;
+      })()}
       <div style="margin-left:auto;display:flex;align-items:center;font-size:11px;color:var(--text-muted);padding:0 10px">
-        💡 Klik tanggal di kalender → tabel ter-filter ke task yang dijadwalkan di tanggal itu
+        💡 Klik tab "Belum Selesai" buat review task yang masih TODO/PROSES (semua tanggal)
       </div>
     </div>
 
@@ -4360,7 +4372,7 @@ function renderRecapPageHtml() {
   `;
 }
 
-// v2.26: render content per tab
+// v2.26-v2.29: render content per tab — Tabel / Kalender / Belum Selesai
 function renderRecapTabContent() {
   const root = document.getElementById('recap-tab-content');
   if (!root) return;
@@ -4369,11 +4381,160 @@ function renderRecapTabContent() {
     root.innerHTML = renderRecapCalendarHtml();
     bindRecapCalendarNav();
     renderRecapCalendarGrid();
+  } else if (tab === 'pending') {
+    // v2.29: tab "Belum Selesai" — list TODO + PROSES semua tanggal, sort by date asc
+    root.innerHTML = `<div id="recap-pending-root"></div>`;
+    renderRecapPendingList();
   } else {
     // Tabel — gunakan markup existing recap-table-root
     root.innerHTML = `<div id="recap-table-root"></div>`;
     renderRecapTable();
   }
+}
+
+// v2.29: List task yang belum selesai (TODO + PROSES) — semua tanggal, sort by date asc
+function renderRecapPendingList() {
+  const root = document.getElementById('recap-pending-root');
+  if (!root) return;
+  const rf = STATE.recapFilters;
+  const today = todayStr();
+
+  // Ambil semua task TODO + PROSES (non-done, non-deleted, non-notCompleted)
+  let tasks = STATE.tasks.filter(t =>
+    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+    && t.isDeleted !== true
+    && t.notCompleted !== true
+    && t.status !== 'done');
+
+  // Apply filter shared: member, category, search (skip from/to & status)
+  if (rf.memberId) tasks = tasks.filter(t => t.assigneeId === rf.memberId);
+  if (rf.categoryId) tasks = tasks.filter(t => t.category === rf.categoryId);
+  if (rf.search) {
+    const q = rf.search.toLowerCase();
+    tasks = tasks.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q));
+  }
+
+  // Sort by date asc — paling lama duluan
+  tasks.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  // Summary
+  const totalAll = tasks.length;
+  const overdueCount = tasks.filter(t => t.date && t.date < today).length;
+  const todayCount = tasks.filter(t => t.date === today).length;
+  const futureCount = tasks.filter(t => t.date && t.date > today).length;
+
+  // Update summary cards
+  const summaryRoot = document.getElementById('recap-summary-root');
+  if (summaryRoot) {
+    summaryRoot.innerHTML = `
+      <div class="recap-summary">
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">Total Belum Selesai</div>
+          <div class="recap-summary-value" style="color:#dc2626">${totalAll}</div>
+          <div class="recap-summary-detail">Status TODO + PROSES</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">⚠️ Overdue (Lampau)</div>
+          <div class="recap-summary-value" style="color:#dc2626">${overdueCount}</div>
+          <div class="recap-summary-detail">Belum dikerjakan setelah jadwal</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">📅 Hari Ini</div>
+          <div class="recap-summary-value" style="color:var(--warning)">${todayCount}</div>
+          <div class="recap-summary-detail">Dijadwalkan tanggal ${today}</div>
+        </div>
+        <div class="recap-summary-card">
+          <div class="recap-summary-label">⏭️ Mendatang</div>
+          <div class="recap-summary-value" style="color:var(--info)">${futureCount}</div>
+          <div class="recap-summary-detail">Dijadwalkan di masa depan</div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (tasks.length === 0) {
+    root.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:60px 20px;text-align:center">
+        <div style="font-size:48px;margin-bottom:8px">🎉</div>
+        <div style="font-size:16px;font-weight:600;color:var(--success);margin-bottom:6px">Semua tugas sudah selesai!</div>
+        <div style="font-size:13px;color:var(--text-muted)">Tidak ada task TODO/PROSES yang nyangkut. Mantap.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Group by status (TODO vs PROSES) untuk display
+  const todoTasks = tasks.filter(t => t.status === 'todo');
+  const prosesTasks = tasks.filter(t => t.status === 'proses');
+
+  function renderTaskRow(t) {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const catBadge = cat ? `<span class="category-badge" style="background:${cat.color}20;color:${cat.color}">${escapeHtml(cat.short || cat.name)}</span>` : '';
+    const isOverdue = t.date && t.date < today;
+    const isFromTemplate = !!t.fromTemplateId;
+    const dayLabel = (() => {
+      if (!t.date) return '<span style="color:var(--text-muted)">tanpa tanggal</span>';
+      if (t.date === today) return `<span style="color:var(--warning);font-weight:600">Hari ini (${t.date})</span>`;
+      if (t.date < today) {
+        const dayDiff = Math.floor((new Date(today) - new Date(t.date)) / 86400000);
+        return `<span style="color:#dc2626;font-weight:600" title="Lampau ${dayDiff} hari">⚠️ ${t.date} (${dayDiff} hari lalu)</span>`;
+      }
+      return `<span style="color:var(--info)">${t.date} (mendatang)</span>`;
+    })();
+    const projTag = t.isProject ? `<span style="font-size:10px;color:#7c3aed;font-weight:600;margin-left:6px">📌 Proyek${t.dueDate && t.dueDate !== t.date ? ` s/d ${t.dueDate.slice(5)}` : ''}</span>` : '';
+    const tmplTag = isFromTemplate ? `<span style="font-size:10px;color:#92400e;font-weight:600;margin-left:6px;background:#fde68a;padding:1px 6px;border-radius:4px">🗓️ Template</span>` : '';
+    const sharedTag = t.isShared ? `<span style="font-size:10px;color:#0891b2;font-weight:600;margin-left:6px">👥 Bersama</span>` : '';
+
+    return `
+      <div class="pending-task-row" data-pending-task="${t.id}" style="background:white;border:1px solid var(--border);border-left:4px solid ${isOverdue ? '#dc2626' : (t.date === today ? '#f59e0b' : '#06b6d4')};border-radius:6px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:transform .12s,box-shadow .12s">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+              ${catBadge}
+              <div style="font-weight:600;font-size:14px">${escapeHtml(t.title || '(tanpa judul)')}</div>
+              ${projTag}${tmplTag}${sharedTag}
+            </div>
+            ${t.description ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;line-height:1.4">${escapeHtml(t.description.slice(0, 140))}${t.description.length > 140 ? '…' : ''}</div>` : ''}
+            <div style="display:flex;gap:12px;font-size:11.5px;flex-wrap:wrap;align-items:center">
+              <span>📅 ${dayLabel}</span>
+              <span>👤 ${escapeHtml(t.assigneeName || '?')}</span>
+              ${t.startTime ? `<span style="color:#6b21a8">⏰ ${escapeHtml(t.startTime)}${t.endTime ? `–${escapeHtml(t.endTime)}` : ''}</span>` : ''}
+              <span style="color:var(--text-muted)">${(t.progress || 0)}% progress</span>
+            </div>
+          </div>
+          <div>
+            <span class="status-pill status-${t.status}" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;text-transform:uppercase;${t.status === 'proses' ? 'background:#fef3c7;color:#92400e' : 'background:#dbeafe;color:#1e40af'}">${t.status}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  let html = '';
+  if (prosesTasks.length > 0) {
+    html += `<h3 style="font-size:14px;font-weight:700;color:#92400e;margin:0 0 10px;display:flex;align-items:center;gap:8px">
+      🔄 Sedang Dikerjakan (${prosesTasks.length})
+      <span style="font-size:11px;color:var(--text-muted);font-weight:400">— task yang lagi proses tapi belum selesai</span>
+    </h3>`;
+    html += prosesTasks.map(renderTaskRow).join('');
+    html += '<div style="height:18px"></div>';
+  }
+  if (todoTasks.length > 0) {
+    html += `<h3 style="font-size:14px;font-weight:700;color:#1e40af;margin:0 0 10px;display:flex;align-items:center;gap:8px">
+      📋 Belum Dimulai (${todoTasks.length})
+      <span style="font-size:11px;color:var(--text-muted);font-weight:400">— task status TODO, belum di-kerjakan</span>
+    </h3>`;
+    html += todoTasks.map(renderTaskRow).join('');
+  }
+
+  root.innerHTML = html;
+
+  // Klik row → buka modal task
+  root.querySelectorAll('[data-pending-task]').forEach(el => {
+    el.addEventListener('click', () => openTaskModal(el.dataset.pendingTask));
+  });
 }
 
 // v2.26: kalender variant — pakai filter shared dari recapFilters
@@ -4506,9 +4667,8 @@ function getFilteredRecapTasks() {
       }
       // Task biasa: exact match
       if ((t.date || '') === target) return true;
-      // Carry-over: kalau target == today, task lampau yg belum done + bukan dari template ikut muncul
-      // (Match dengan logic visibleTasks di kanban biar konsisten dengan apa yg user lihat di hari ini.)
-      if (isToday && t.status !== 'done' && t.date && t.date < today && !t.fromTemplateId) return true;
+      // v2.29: Carry-over kalau target == today — termasuk dari template (konsisten dengan kanban).
+      if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
       return false;
     });
   } else {
@@ -6195,16 +6355,19 @@ function renderTaskCard(t) {
     ? `<span class="category-badge" style="color:${cat.color}">${escapeHtml(cat.name)}</span>`
     : '';
 
-  // Carry-over badge — kalau task dari tanggal lampau, status != done, & lagi lihat "hari ini"
-  // FIX v2.19: task fromTemplate tidak rollover, jadi gak ada carry-over badge buat mereka
+  // v2.29: Carry-over badge — task dari tanggal lampau & belum done, ditampilkan di hari ini.
+  // Termasuk task dari template (label badge dibedain: "Template kemarin belum eksekusi").
   const today = todayStr();
   const isCarryOver = STATE.selectedDate === today
     && t.date && t.date < today
-    && t.status !== 'done'
-    && !t.fromTemplateId;
+    && t.status !== 'done';
   const carryoverHtml = isCarryOver ? (() => {
     const [y, m, d] = t.date.split('-');
-    return `<span class="carryover-badge">⏪ Carry-over dari ${d}/${m}</span>`;
+    if (t.fromTemplateId) {
+      // Task dari template harian/mingguan yang belum di-eksekusi kemarin → label khusus
+      return `<span class="carryover-badge" style="background:#fde68a;color:#78350f;border-color:#f59e0b" title="Task dari template tanggal ${d}/${m} yang belum dieksekusi">📌 Template ${d}/${m} belum eksekusi</span>`;
+    }
+    return `<span class="carryover-badge" title="Task dijadwalkan tanggal ${d}/${m}, ke-rollover karena belum done">⏪ Carry-over dari ${d}/${m}</span>`;
   })() : '';
 
   // Shared badge — task bersama
