@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.26 — ApotekKu</title>
+<title>Team Tracker v2.27 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -4337,9 +4337,21 @@ function renderRecapPageHtml() {
         📅 Kalender
       </button>
       <div style="margin-left:auto;display:flex;align-items:center;font-size:11px;color:var(--text-muted);padding:0 10px">
-        💡 Klik tanggal di kalender → langsung pindah ke Tabel ter-filter tanggal itu
+        💡 Klik tanggal di kalender → tabel ter-filter ke task yang dijadwalkan di tanggal itu
       </div>
     </div>
+
+    <!-- v2.27: Banner saat filter single-day aktif (klik dari kalender) -->
+    ${(rf.from && rf.to && rf.from === rf.to) ? `
+      <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;margin-bottom:12px;display:flex;align-items:center;gap:12px;font-size:13px">
+        <span style="font-size:18px">📍</span>
+        <div style="flex:1;color:#92400e">
+          Filter aktif ke <strong>tanggal ${escapeHtml(rf.from)}</strong> saja (hard match start date).
+          Project multi-hari hanya muncul kalau <strong>start date</strong>-nya cocok.
+        </div>
+        <button class="btn btn-ghost btn-sm" id="recap-clear-date">↺ Lihat semua tanggal</button>
+      </div>
+    ` : ''}
 
     <!-- v2.26: Content area — tab Tabel atau tab Kalender -->
     <div id="recap-tab-content"></div>
@@ -4392,7 +4404,8 @@ function bindRecapCalendarNav() {
   if (today) today.addEventListener('click', () => { STATE.calendarMonth = null; renderRecapTabContent(); });
 }
 
-// v2.26: grid kalender yang respect recapFilters
+// v2.26-v2.27: grid kalender — pakai getCalendarRecapTasks() yang SKIP filter from/to.
+// Kalender = overview bulanan. Klik tanggal → filter from=to=tanggal itu di TABEL (tidak mempengaruhi kalender).
 function renderRecapCalendarGrid() {
   const root = document.getElementById('calendar-grid-root');
   if (!root) return;
@@ -4402,8 +4415,8 @@ function renderRecapCalendarGrid() {
   const startWeekday = firstDay.getDay(); // 0 = Sun
   const daysInMonth = new Date(y, m, 0).getDate();
   const today = todayStr();
-  // Hitung tasks per tanggal sesuai filter recap (KECUALI range from/to — kalender bisa lihat all-time)
-  const filtered = getFilteredRecapTasks().filter(t => !t.isDeleted && t.notCompleted !== true);
+  // v2.27: pakai helper khusus kalender (skip from/to filter)
+  const filtered = getCalendarRecapTasks();
   const tasksByDate = {};
   filtered.forEach(t => {
     if (t.isProject) {
@@ -4453,7 +4466,8 @@ function renderRecapCalendarGrid() {
   html += '</div>';
   root.innerHTML = html;
 
-  // v2.26: klik tanggal → set filter from/to ke tanggal itu + switch ke tab Tabel
+  // v2.26-v2.27: klik tanggal → set filter from/to ke tanggal itu (single-day mode → hard match)
+  // + switch ke tab Tabel. Skip kalau cell kosong (no task).
   root.querySelectorAll('[data-cal-day]').forEach(el => {
     el.addEventListener('click', () => {
       const d = el.dataset.calDay;
@@ -4461,29 +4475,38 @@ function renderRecapCalendarGrid() {
       STATE.recapFilters.to = d;
       STATE.recapTab = 'table';
       renderMain();
-      toast(`Tabel di-filter ke ${d}`, 'info');
+      toast(`📍 Tabel filter ke tanggal ${d}`, 'info');
     });
   });
 }
 
+// v2.27: filter recap dengan 2 mode:
+//  - SINGLE-DAY (from === to): hard match by t.date (start date) only. Hindari overlap project yang bikin user bingung "klik 22 muncul tasks 22-27".
+//  - RANGE (from !== to): overlap untuk project (project active di overlap range), exact untuk task biasa.
 function getFilteredRecapTasks() {
   const rf = STATE.recapFilters;
   let tasks = STATE.tasks.filter(t =>
     (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId && t.isDeleted !== true);
-  // FIX v2.17: untuk task proyek, pakai overlap range bukan strict t.date in [from,to]
-  if (rf.from) tasks = tasks.filter(t => {
-    if (t.isProject) {
-      const end = t.dueDate || t.date || '';
-      return end >= rf.from; // project end >= filter from
-    }
-    return (t.date || '') >= rf.from;
-  });
-  if (rf.to) tasks = tasks.filter(t => {
-    if (t.isProject) {
-      return (t.date || '') <= rf.to; // project start <= filter to
-    }
-    return (t.date || '') <= rf.to;
-  });
+
+  const singleDay = rf.from && rf.to && rf.from === rf.to;
+  if (singleDay) {
+    // HARD MATCH — task.date harus EXACT === rf.from (gak ada overlap, gak ada project span)
+    tasks = tasks.filter(t => (t.date || '') === rf.from);
+  } else {
+    if (rf.from) tasks = tasks.filter(t => {
+      if (t.isProject) {
+        const end = t.dueDate || t.date || '';
+        return end >= rf.from; // project end >= filter from
+      }
+      return (t.date || '') >= rf.from;
+    });
+    if (rf.to) tasks = tasks.filter(t => {
+      if (t.isProject) {
+        return (t.date || '') <= rf.to; // project start <= filter to
+      }
+      return (t.date || '') <= rf.to;
+    });
+  }
   if (rf.status === 'unfinished') tasks = tasks.filter(t => t.status !== 'done');
   else if (rf.status !== 'all') tasks = tasks.filter(t => t.status === rf.status);
   if (rf.memberId) tasks = tasks.filter(t => t.assigneeId === rf.memberId);
@@ -4509,6 +4532,27 @@ function getFilteredRecapTasks() {
     if (va > vb) return rf.sortDir === 'asc' ? 1 : -1;
     return 0;
   });
+  return tasks;
+}
+
+// v2.27: Helper untuk kalender — SKIP filter from/to (kalender = overview bulanan,
+// gak boleh ke-restrict by date picker). Filter member/kategori/status/search tetap apply.
+function getCalendarRecapTasks() {
+  const rf = STATE.recapFilters;
+  let tasks = STATE.tasks.filter(t =>
+    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId
+    && t.isDeleted !== true
+    && t.notCompleted !== true);
+  if (rf.status === 'unfinished') tasks = tasks.filter(t => t.status !== 'done');
+  else if (rf.status !== 'all') tasks = tasks.filter(t => t.status === rf.status);
+  if (rf.memberId) tasks = tasks.filter(t => t.assigneeId === rf.memberId);
+  if (rf.categoryId) tasks = tasks.filter(t => t.category === rf.categoryId);
+  if (rf.search) {
+    const q = rf.search.toLowerCase();
+    tasks = tasks.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q));
+  }
   return tasks;
 }
 
@@ -4559,6 +4603,15 @@ function bindRecapFilters() {
       STATE.recapTab = t;
       renderMain();
     });
+  });
+
+  // v2.27: clear date filter (saat single-day banner aktif)
+  const clearDateBtn = document.getElementById('recap-clear-date');
+  if (clearDateBtn) clearDateBtn.addEventListener('click', () => {
+    STATE.recapFilters.from = '';
+    STATE.recapFilters.to = '';
+    renderMain();
+    toast('Filter tanggal di-clear', 'info');
   });
 }
 
@@ -4675,9 +4728,13 @@ function renderRecapTable() {
     const targetInfo = targetVal > 0
       ? `<div style="font-size:10.5px;color:var(--info);font-family:var(--font-mono);margin-top:2px">🎯 ${t.progressCount || 0}/${targetVal}</div>`
       : '';
+    // v2.27: untuk task proyek (multi-hari), tampilkan range start-end + badge biar user paham
+    const projectRange = t.isProject
+      ? `<div style="font-size:10px;color:#7c3aed;font-weight:600;margin-top:2px">📌 Proyek${t.dueDate && t.dueDate !== t.date ? ` (s/d ${t.dueDate.slice(5)})` : ''}</div>`
+      : '';
     return `
       <tr data-recap-task="${t.id}">
-        <td class="cell-date">${t.date || '—'}${timeRange}</td>
+        <td class="cell-date">${t.date || '—'}${projectRange}${timeRange}</td>
         <td>${catBadge}</td>
         <td class="cell-title">${escapeHtml(t.title || '')}${targetInfo}</td>
         <td>
