@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.35 — ApotekKu</title>
+<title>Team Tracker v2.37 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4446,7 +4446,7 @@ function renderRecapPageHtml() {
         <span style="font-size:18px">📍</span>
         <div style="flex:1;min-width:280px;color:#92400e">
           Filter aktif ke <strong>tanggal ${escapeHtml(rf.from)}</strong>${isToday ? ' (hari ini)' : ''}.
-          Tampil: task yang dijadwalkan tanggal ini, project multi-hari yang aktif${isToday ? ', dan <strong>carry-over</strong> dari hari sebelumnya yang belum selesai' : ''}.
+          <br><span style="font-size:11.5px">Tampil: task yang <strong>aktif</strong> di tanggal ini (project multi-hari yang span tanggal, task non-project belum selesai, plus event audit: ditandai tidak selesai / dikembalikan / dihapus). Status di kolom = <strong>status pada tanggal itu</strong> (derived dari riwayat).</span>
         </div>
         <button class="btn btn-ghost btn-sm" id="recap-clear-date">↺ Lihat semua tanggal</button>
       </div>
@@ -4698,21 +4698,21 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
   if (kalKerjaCacheBox.map.has(cacheKey)) return kalKerjaCacheBox.map.get(cacheKey);
 
   const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const today = todayStr();
   const result = {};
   KALKERJA_TIME_SLOTS.forEach(slot => { result[slot.label] = []; });
 
-  // Get tasks for member at this date (semua status: todo/proses/done; skip notCompleted+deleted)
+  // v2.37: pakai isTaskActiveOnDay biar konsisten dengan logic Rekap & Kalender.
+  // Task aktif: project span tanggal ini, atau task non-project carry-over hingga selesai/notCompleted/today.
   const tasks = STATE.tasks.filter(t => {
-    if (t.isDeleted === true || t.notCompleted === true) return false;
     if (t.assigneeId !== memberId) return false;
-    if (!t.date) return false;
-    if (t.isProject) {
-      const start = t.date;
-      const end = t.dueDate || t.date;
-      return dateStr >= start && dateStr <= end;
-    }
-    return t.date === dateStr;
+    if (t.notCompleted === true) return false; // task notCompleted skip (sudah di menu sendiri)
+    if (t.isDeleted === true) return false;    // task deleted skip (gak di laporan kalender kerja)
+    return isTaskActiveOnDay(t, dateStr, today);
   });
+
+  // v2.37: cek hari libur (weekend atau tanggal merah custom)
+  const isLibur = kalKerjaIsLiburDay(dateStr);
 
   // Separate timed vs untimed
   const timed = [];
@@ -4727,7 +4727,8 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     }
   });
 
-  // Place timed tasks (spread ke semua slot overlap)
+  // Place timed tasks (spread ke semua slot overlap) — berlaku DI HARI LIBUR juga
+  // (user mau: kalau hari libur ada task, jam-nya disesuaikan dengan real)
   timed.sort((a, b) => a.start.localeCompare(b.start));
   timed.forEach(({ task, start, end }) => {
     KALKERJA_TIME_SLOTS.forEach(slot => {
@@ -4738,23 +4739,24 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     });
   });
 
-  // Place untimed tasks ke slot KOSONG, 1 task per slot, mulai pagi.
-  // Goal: hari kerja "tidak bolong-bolong" — task tanpa jam ngisi gap.
-  let untimedIdx = 0;
-  for (const slot of KALKERJA_TIME_SLOTS) {
-    if (slot.lunch) continue;
-    if (untimedIdx >= untimed.length) break;
-    if (result[slot.label].length === 0) {
-      result[slot.label].push(untimed[untimedIdx]);
+  // v2.37: Untimed tasks AUTO-PACK HANYA di hari kerja (bukan hari libur).
+  // Hari libur → untimed tasks SKIP (jangan paksa fill slot — user bisa explicit set jam kalau emang kerja).
+  if (!isLibur) {
+    let untimedIdx = 0;
+    for (const slot of KALKERJA_TIME_SLOTS) {
+      if (slot.lunch) continue;
+      if (untimedIdx >= untimed.length) break;
+      if (result[slot.label].length === 0) {
+        result[slot.label].push(untimed[untimedIdx]);
+        untimedIdx++;
+      }
+    }
+    // Sisa untimed → tumpuk di slot terakhir
+    while (untimedIdx < untimed.length) {
+      const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
+      result[lastSlot.label].push(untimed[untimedIdx]);
       untimedIdx++;
     }
-  }
-  // Sisa untimed yg gak muat (kalau task > slot kosong) → tumpuk di slot pertama yg kosong atau slot 16-17
-  while (untimedIdx < untimed.length) {
-    // Cari slot last non-lunch — tumpuk semua sisa ke sana
-    const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
-    result[lastSlot.label].push(untimed[untimedIdx]);
-    untimedIdx++;
   }
 
   kalKerjaCacheBox.map.set(cacheKey, result);
@@ -4770,17 +4772,20 @@ function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
   if (STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined) {
     return STATE.kalKerjaOverrides[overrideKey];
   }
-  // Hari libur (weekend atau tanggal merah custom)
+  // v2.37: cek task scheduled di slot ini DULU (sebelum fallback "Libur")
+  const schedule = kalKerjaScheduleDay(memberId, year, month, day);
+  const tasksAtSlot = schedule[slotLabel] || [];
+  if (tasksAtSlot.length > 0) {
+    // Task ada di slot ini → tampilkan (overrides default "Libur" untuk weekend/tanggal merah)
+    return tasksAtSlot.map(t => t.title || '').join(' + ');
+  }
+  // v2.37: kalau slot kosong DAN hari libur → tampilkan label libur
   const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
   if (kalKerjaIsLiburDay(dateStr)) {
     return kalKerjaHolidayName(dateStr) || 'Libur';
   }
-  // Schedule day → ambil tasks utk slot ini
-  const schedule = kalKerjaScheduleDay(memberId, year, month, day);
-  const tasksAtSlot = schedule[slotLabel] || [];
-  if (tasksAtSlot.length === 0) return '';
-  // Multiple task di 1 slot → join dengan ' + ' (kalau memang barengan)
-  return tasksAtSlot.map(t => t.title || '').join(' + ');
+  // Hari kerja, slot kosong → empty
+  return '';
 }
 
 function renderKalenderKerjaPageHtml() {
@@ -5237,7 +5242,7 @@ function renderRecapCalendarGrid() {
   //   - Project: muncul setiap hari di range [date, dueDate] hingga done/notCompleted
   //   - Non-project: muncul dari scheduled date sampai done/notCompleted/today (carry-over)
   // Plus support Case 4: task yg punya event (marked_not_completed/restored/deleted) di hari itu juga muncul.
-  const filtered = getCalendarRecapTasks(); // sudah respect member/kategori/status/search filter
+  // v2.36: pakai manual filter (allTasksForCal di bawah) — getCalendarRecapTasks skip notCompleted, kita perlu include buat audit Case 4
   const tasksByDate = {};
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -5339,10 +5344,15 @@ function renderRecapCalendarGrid() {
 function getFilteredRecapTasks() {
   const rf = STATE.recapFilters;
   const today = todayStr();
-  let tasks = STATE.tasks.filter(t =>
-    (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId && t.isDeleted !== true);
-
+  // v2.37: di single-day mode allow isDeleted task supaya history "tugas dihapus tanggal X" tampil.
+  // Range mode tetap skip isDeleted (rekap range = active history).
   const singleDay = rf.from && rf.to && rf.from === rf.to;
+  let tasks = STATE.tasks.filter(t => {
+    if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
+    if (!singleDay && t.isDeleted === true) return false;
+    return true;
+  });
+
   if (singleDay) {
     const target = rf.from;
     // v2.35: pakai isTaskActiveOnDay — match logic kalender + carry-over + project range + notCompleted history
@@ -5399,25 +5409,34 @@ function getFilteredRecapTasks() {
 
 // v2.27: Helper untuk kalender — SKIP filter from/to (kalender = overview bulanan,
 // gak boleh ke-restrict by date picker). Filter member/kategori/status/search tetap apply.
-// v2.35: Derive status task pada hari tertentu dari activity log.
-// Default fallback ke status sekarang kalau gak ada activity log atau kalau day = today/future.
+// v2.35-v2.37: Derive status task pada hari tertentu dari activity log.
+// v2.37 update: kalau task SEKARANG sudah recovered (bukan notCompleted, bukan deleted),
+//               SKIP marked_not_completed di history — anggap as "transient state" yg ter-undo.
+//               Hanya task yg saat ini benar-benar notCompleted atau deleted yang label "TIDAK SELESAI"/"DIHAPUS" muncul di history.
 function deriveTaskStatusOnDay(task, dayStr) {
   const today = todayStr();
-  // Untuk hari ini & masa depan, pakai status sekarang (apa adanya)
+  // Hari ini & masa depan → pakai status sekarang (apa adanya)
   if (dayStr >= today) {
+    if (task.isDeleted === true) return 'deleted';
     if (task.notCompleted === true) return 'notCompleted';
     return task.status || 'todo';
   }
-  // Untuk hari lampau, derive dari activity log
+  // Hari lampau → derive dari activity log
   const activities = (task.activity || []).slice()
     .filter(a => a && a.at && typeof a.at === 'string')
     .sort((a, b) => (a.at || '').localeCompare(b.at || ''));
-  let status = 'todo'; // default awal task
+  // v2.37: skip marked_not_completed kalau task SAAT INI bukan notCompleted/deleted lagi
+  // (artinya task ter-restored / di-selesai-kan kemudian, label TIDAK SELESAI gak relevan di history)
+  const skipNotCompletedHistory = !task.notCompleted && !task.isDeleted;
+  let status = 'todo';
   for (const act of activities) {
     const actDate = (a => a && a.length >= 10 ? a.slice(0, 10) : '')(act.at);
-    if (actDate > dayStr) break; // skip future activities (relatif ke dayStr)
+    if (actDate > dayStr) break;
     if (act.type === 'status_changed' && act.to) status = act.to;
-    else if (act.type === 'marked_not_completed') status = 'notCompleted';
+    else if (act.type === 'marked_not_completed') {
+      if (!skipNotCompletedHistory) status = 'notCompleted';
+      // else: skip — task sudah recovered, history label ditolak
+    }
     else if (act.type === 'restored_from_not_completed') status = act.to || 'todo';
     else if (act.type === 'task_deleted') status = 'deleted';
   }
@@ -5431,8 +5450,16 @@ function deriveTaskStatusOnDay(task, dayStr) {
 //     - notCompleted: aktif sampai notCompletedAt date (termasuk)
 //     - Pending: aktif dari task.date sampai today
 function isTaskActiveOnDay(task, dayStr, today) {
-  if (!task || task.isDeleted === true) return false;
+  if (!task) return false;
   if (!task.date) return false;
+  // v2.37: task isDeleted → aktif sampai tanggal dihapus (sesuai task_deleted activity)
+  if (task.isDeleted === true) {
+    const delAct = (task.activity || []).find(a => a.type === 'task_deleted');
+    const delDay = delAct && delAct.at ? delAct.at.slice(0, 10) : null;
+    if (!delDay) return false; // gak tahu kapan dihapus, skip
+    if (dayStr > delDay) return false; // setelah dihapus, skip
+    // Sampai tanggal dihapus, lanjut cek logic project/non-project di bawah
+  }
 
   if (task.isProject) {
     const start = task.date;
@@ -5605,12 +5632,14 @@ function renderRecapTable() {
   if (!root) return;
   const tasks = getFilteredRecapTasks();
   const rf = STATE.recapFilters;
+  const isSingleDay = rf.from && rf.to && rf.from === rf.to;
 
-  // Summary
+  // Summary — v2.36: kalau single-day mode, pakai _derivedStatus biar count akurat per tanggal historical
+  const statusOf = (t) => (isSingleDay && t._derivedStatus) ? t._derivedStatus : (t.status || 'todo');
   const total = tasks.length;
-  const doneCount = tasks.filter(t => t.status === 'done').length;
-  const prosesCount = tasks.filter(t => t.status === 'proses').length;
-  const todoCount = tasks.filter(t => t.status === 'todo').length;
+  const doneCount = tasks.filter(t => statusOf(t) === 'done').length;
+  const prosesCount = tasks.filter(t => statusOf(t) === 'proses').length;
+  const todoCount = tasks.filter(t => statusOf(t) === 'todo').length;
   const completionPct = total > 0 ? Math.round(doneCount * 100 / total) : 0;
   const summaryRoot = document.getElementById('recap-summary-root');
   if (summaryRoot) {
@@ -5644,7 +5673,7 @@ function renderRecapTable() {
     // v2.28: empty state lebih informatif sesuai konteks filter
     const singleDay = rf.from && rf.to && rf.from === rf.to;
     const hint = singleDay
-      ? `Tidak ada task yang dijadwalkan tanggal <strong>${escapeHtml(rf.from)}</strong>.<br>Coba klik "<strong>↺ Lihat semua tanggal</strong>" di atas, atau cek menu <strong>📌 Tugas Proyek</strong> & <strong>🚫 Tidak Selesai</strong>.`
+      ? `Tidak ada task aktif tanggal <strong>${escapeHtml(rf.from)}</strong> (juga tidak ada event audit di hari ini).<br>Coba klik "<strong>↺ Lihat semua tanggal</strong>" di atas, atau cek menu <strong>📌 Tugas Proyek</strong> & <strong>🚫 Tidak Selesai</strong>.`
       : `Coba longgarkan filter atau ubah range tanggal.`;
     root.innerHTML = `
       <div class="recap-table-wrap">
@@ -5699,11 +5728,19 @@ function renderRecapTable() {
     const statusHint = isCurrDiff
       ? `<div style="font-size:9.5px;color:var(--text-muted);margin-top:2px">sekarang: ${escapeHtml((t.status || 'todo').toUpperCase())}</div>`
       : '';
+    // v2.37: task dihapus → row tidak clickable (no openTaskModal), judul strikethrough, badge DIHAPUS
+    const isDeletedTask = t.isDeleted === true;
+    const rowAttr = isDeletedTask
+      ? 'data-recap-task-deleted="1" style="opacity:0.7;cursor:not-allowed" title="Task ini sudah dihapus permanen — detail tidak bisa dibuka"'
+      : `data-recap-task="${t.id}"`;
+    const titleHtml = isDeletedTask
+      ? `<span style="text-decoration:line-through;color:var(--text-muted)">${escapeHtml(t.title || '')}</span> <span style="font-size:10px;color:#dc2626;font-weight:700;background:#fee2e2;padding:1px 6px;border-radius:4px;margin-left:4px">DIHAPUS</span>`
+      : `${escapeHtml(t.title || '')}${targetInfo}`;
     return `
-      <tr data-recap-task="${t.id}">
+      <tr ${rowAttr}>
         <td class="cell-date">${t.date || '—'}${projectRange}${timeRange}</td>
         <td>${catBadge}</td>
-        <td class="cell-title">${escapeHtml(t.title || '')}${targetInfo}</td>
+        <td class="cell-title">${titleHtml}</td>
         <td>
           <span style="display:inline-flex;align-items:center;gap:6px">
             ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
