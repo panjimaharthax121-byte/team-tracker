@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.27 — ApotekKu</title>
+<title>Team Tracker v2.28 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2748,7 +2748,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -4341,17 +4341,19 @@ function renderRecapPageHtml() {
       </div>
     </div>
 
-    <!-- v2.27: Banner saat filter single-day aktif (klik dari kalender) -->
-    ${(rf.from && rf.to && rf.from === rf.to) ? `
-      <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;margin-bottom:12px;display:flex;align-items:center;gap:12px;font-size:13px">
+    <!-- v2.27-v2.28: Banner saat filter single-day aktif (klik dari kalender) -->
+    ${(rf.from && rf.to && rf.from === rf.to) ? (() => {
+      const isToday = rf.from === todayStr();
+      return `
+      <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;margin-bottom:12px;display:flex;align-items:center;gap:12px;font-size:13px;flex-wrap:wrap">
         <span style="font-size:18px">📍</span>
-        <div style="flex:1;color:#92400e">
-          Filter aktif ke <strong>tanggal ${escapeHtml(rf.from)}</strong> saja (hard match start date).
-          Project multi-hari hanya muncul kalau <strong>start date</strong>-nya cocok.
+        <div style="flex:1;min-width:280px;color:#92400e">
+          Filter aktif ke <strong>tanggal ${escapeHtml(rf.from)}</strong>${isToday ? ' (hari ini)' : ''}.
+          Tampil: task yang dijadwalkan tanggal ini, project multi-hari yang aktif${isToday ? ', dan <strong>carry-over</strong> dari hari sebelumnya yang belum selesai' : ''}.
         </div>
         <button class="btn btn-ghost btn-sm" id="recap-clear-date">↺ Lihat semua tanggal</button>
       </div>
-    ` : ''}
+    `; })() : ''}
 
     <!-- v2.26: Content area — tab Tabel atau tab Kalender -->
     <div id="recap-tab-content"></div>
@@ -4480,18 +4482,35 @@ function renderRecapCalendarGrid() {
   });
 }
 
-// v2.27: filter recap dengan 2 mode:
-//  - SINGLE-DAY (from === to): hard match by t.date (start date) only. Hindari overlap project yang bikin user bingung "klik 22 muncul tasks 22-27".
-//  - RANGE (from !== to): overlap untuk project (project active di overlap range), exact untuk task biasa.
+// v2.27-v2.28: filter recap dengan 2 mode:
+//  - SINGLE-DAY (from === to): match task yang dijadwalkan ATAU dikerjakan di tanggal itu.
+//    - Task biasa: t.date === rf.from (exact start), ATAU carry-over (date < target & status != done & target == today).
+//    - Task proyek: target di dalam range [date, dueDate]. Termasuk yang start sebelum target (carry-over multi-hari).
+//  - RANGE (from !== to): overlap untuk project, exact untuk task biasa.
 function getFilteredRecapTasks() {
   const rf = STATE.recapFilters;
+  const today = todayStr();
   let tasks = STATE.tasks.filter(t =>
     (t.boardId || DEFAULT_BOARD_ID) === STATE.currentBoardId && t.isDeleted !== true);
 
   const singleDay = rf.from && rf.to && rf.from === rf.to;
   if (singleDay) {
-    // HARD MATCH — task.date harus EXACT === rf.from (gak ada overlap, gak ada project span)
-    tasks = tasks.filter(t => (t.date || '') === rf.from);
+    const target = rf.from;
+    const isToday = target === today;
+    tasks = tasks.filter(t => {
+      // Task proyek: include kalau target ada di dalam range [date, dueDate]
+      if (t.isProject) {
+        const start = t.date || '';
+        const end = t.dueDate || t.date || '';
+        return start <= target && end >= target;
+      }
+      // Task biasa: exact match
+      if ((t.date || '') === target) return true;
+      // Carry-over: kalau target == today, task lampau yg belum done + bukan dari template ikut muncul
+      // (Match dengan logic visibleTasks di kanban biar konsisten dengan apa yg user lihat di hari ini.)
+      if (isToday && t.status !== 'done' && t.date && t.date < today && !t.fromTemplateId) return true;
+      return false;
+    });
   } else {
     if (rf.from) tasks = tasks.filter(t => {
       if (t.isProject) {
@@ -4697,10 +4716,17 @@ function renderRecapTable() {
   }
 
   if (tasks.length === 0) {
+    // v2.28: empty state lebih informatif sesuai konteks filter
+    const singleDay = rf.from && rf.to && rf.from === rf.to;
+    const hint = singleDay
+      ? `Tidak ada task yang dijadwalkan tanggal <strong>${escapeHtml(rf.from)}</strong>.<br>Coba klik "<strong>↺ Lihat semua tanggal</strong>" di atas, atau cek menu <strong>📌 Tugas Proyek</strong> & <strong>🚫 Tidak Selesai</strong>.`
+      : `Coba longgarkan filter atau ubah range tanggal.`;
     root.innerHTML = `
       <div class="recap-table-wrap">
-        <div class="recap-table-empty">
-          📭 Tidak ada tugas yang cocok dengan filter
+        <div class="recap-table-empty" style="text-align:center;padding:40px 20px">
+          <div style="font-size:36px;margin-bottom:8px">📭</div>
+          <div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:6px">Tidak ada tugas yang cocok dengan filter</div>
+          <div style="font-size:13px;color:var(--text-muted);line-height:1.6">${hint}</div>
         </div>
       </div>
     `;
