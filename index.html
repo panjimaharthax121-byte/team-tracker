@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.30 — ApotekKu</title>
+<title>Team Tracker v2.32 — ApotekKu</title>
+<!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2650,6 +2652,8 @@ const STATE = {
   projectSearch: '',            // v2.22
   notDoneFilter: null,          // v2.24 — { member, category, search }
   chatPanelOpen: false,         // v2.26 — apakah popup chat lagi visible
+  kalKerja: null,               // v2.32 — { year, month, memberFilter } state Kalender Kerja
+  kalKerjaOverrides: {},        // v2.32 — { '2026-05-memberid-DD-slot': 'override value' } loaded dari Firestore
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -4615,6 +4619,339 @@ function renderRecapPendingList() {
 }
 
 // v2.26: kalender variant — pakai filter shared dari recapFilters
+/* =============================================================
+   v2.32: KALENDER KERJA BULANAN — laporan untuk direktur
+   Format: grid horizontal (kolom=tanggal, baris=jam slot)
+   - Auto-fill dari task data (assignee + date + startTime/endTime spread)
+   - Cell editable inline (hybrid mode), override tersimpan di Firestore
+   - Export ke Excel pakai SheetJS
+   ============================================================= */
+const KALKERJA_TIME_SLOTS = [
+  { label: '06.00-08.00', start: '06:00', end: '08:00', lunch: false },
+  { label: '08.00-09.00', start: '08:00', end: '09:00', lunch: false },
+  { label: '09.00-10.00', start: '09:00', end: '10:00', lunch: false },
+  { label: '10.00-11.00', start: '10:00', end: '11:00', lunch: false },
+  { label: '11.00-12.00', start: '11:00', end: '12:00', lunch: false },
+  { label: '12.00-13.00', start: '12:00', end: '13:00', lunch: true },
+  { label: '13.00-14.00', start: '13:00', end: '14:00', lunch: false },
+  { label: '14.00-15.00', start: '14:00', end: '15:00', lunch: false },
+  { label: '15.00-16.00', start: '15:00', end: '16:00', lunch: false },
+  { label: '16.00-17.00', start: '16:00', end: '17:00', lunch: false },
+];
+const KALKERJA_DEFAULT_SLOT = '08.00-09.00'; // task tanpa startTime dump di sini
+
+function kalKerjaState() {
+  if (!STATE.kalKerja) {
+    const today = new Date();
+    STATE.kalKerja = {
+      year: today.getFullYear(),
+      month: today.getMonth() + 1,
+      memberFilter: null, // null = semua, atau memberId
+    };
+  }
+  return STATE.kalKerja;
+}
+
+// Auto-fill: cari task assigneeId=member, date di year-month-day, return array task per slot
+function kalKerjaAutoFill(memberId, year, month, day, slotLabel) {
+  const slot = KALKERJA_TIME_SLOTS.find(s => s.label === slotLabel);
+  if (!slot) return [];
+  if (slot.lunch) return []; // slot lunch locked
+  const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const tasks = STATE.tasks.filter(t => {
+    if (t.isDeleted === true || t.notCompleted === true) return false;
+    if (t.assigneeId !== memberId) return false;
+    if (!t.date) return false;
+    // Task project: include kalau day di antara date & dueDate
+    if (t.isProject) {
+      const start = t.date;
+      const end = t.dueDate || t.date;
+      if (dateStr < start || dateStr > end) return false;
+    } else {
+      if (t.date !== dateStr) return false;
+    }
+    // Time slot match — task overlap dengan slot
+    const startTime = t.startTime || KALKERJA_DEFAULT_SLOT.split('-')[0]; // task tanpa jam → default 08:00
+    const endTime = t.endTime || (() => {
+      // Kalau gak ada endTime, default endTime = startTime+1jam (atau slot default 09:00)
+      if (t.startTime) {
+        const [h, m] = t.startTime.split(':').map(Number);
+        return `${String(h+1).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      }
+      return KALKERJA_DEFAULT_SLOT.split('-')[1];
+    })();
+    // Spread: task overlap kalau startTime < slot.end AND endTime > slot.start
+    return startTime < slot.end && endTime > slot.start;
+  });
+  return tasks;
+}
+
+function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
+  const slot = KALKERJA_TIME_SLOTS.find(s => s.label === slotLabel);
+  if (!slot) return '';
+  if (slot.lunch) return 'MAKAN SIANG';
+  // Cek override dulu
+  const overrideKey = `${year}-${String(month).padStart(2,'0')}-${memberId}-${String(day).padStart(2,'0')}-${slotLabel}`;
+  if (STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined) {
+    return STATE.kalKerjaOverrides[overrideKey];
+  }
+  // Auto-fill
+  const tasks = kalKerjaAutoFill(memberId, year, month, day, slotLabel);
+  if (tasks.length === 0) {
+    // Sabtu/Minggu default "Libur"
+    const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const dt = new Date(dateStr);
+    const dayOfWeek = dt.getDay(); // 0 = Sun, 6 = Sat
+    if (dayOfWeek === 0 || dayOfWeek === 6) return 'Libur';
+    return '';
+  }
+  // Join multiple tasks dengan ' + ', truncate
+  return tasks.map(t => (t.title || '').slice(0, 40)).join(' + ');
+}
+
+function renderKalenderKerjaPageHtml() {
+  const s = kalKerjaState();
+  const monthsId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const monthOpts = monthsId.map((name, i) =>
+    `<option value="${i+1}" ${s.month === i+1 ? 'selected' : ''}>${name}</option>`).join('');
+  const yearNow = new Date().getFullYear();
+  const yearOpts = [yearNow-1, yearNow, yearNow+1].map(y =>
+    `<option value="${y}" ${s.year === y ? 'selected' : ''}>${y}</option>`).join('');
+  const memberOpts = STATE.members.map(m =>
+    `<option value="${m.id}" ${s.memberFilter === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('');
+
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">📋 Kalender Kerja Bulanan</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Format laporan kalender kerja untuk direktur — auto-fill dari data Team Tracker, bisa di-edit per cell.</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-success" id="btn-kalkerja-excel">📥 Download Excel</button>
+      </div>
+    </div>
+
+    <div class="filter-strip" style="margin-bottom:18px">
+      <div class="filter-group">
+        <span class="filter-group-label">Bulan</span>
+        <select id="kalkerja-month" class="select" style="width:auto;padding:6px 10px;font-size:13px">${monthOpts}</select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Tahun</span>
+        <select id="kalkerja-year" class="select" style="width:auto;padding:6px 10px;font-size:13px">${yearOpts}</select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Anggota</span>
+        <select id="kalkerja-member" class="select" style="width:auto;padding:6px 10px;font-size:13px">
+          <option value="">Semua</option>${memberOpts}
+        </select>
+      </div>
+      <div class="filter-divider"></div>
+      <div style="font-size:11px;color:var(--text-muted);flex:1">
+        💡 Klik cell untuk edit manual (override auto-fill). MAKAN SIANG locked.
+      </div>
+    </div>
+
+    <div id="kalkerja-grid-root"></div>
+  `;
+}
+
+function bindKalenderKerjaPage() {
+  const s = kalKerjaState();
+  const monthEl = document.getElementById('kalkerja-month');
+  const yearEl = document.getElementById('kalkerja-year');
+  const memberEl = document.getElementById('kalkerja-member');
+  const excelBtn = document.getElementById('btn-kalkerja-excel');
+
+  const refresh = () => renderKalenderKerjaGrid();
+  if (monthEl) monthEl.addEventListener('change', () => { s.month = parseInt(monthEl.value, 10); refresh(); });
+  if (yearEl) yearEl.addEventListener('change', () => { s.year = parseInt(yearEl.value, 10); refresh(); });
+  if (memberEl) memberEl.addEventListener('change', () => { s.memberFilter = memberEl.value || null; refresh(); });
+  if (excelBtn) excelBtn.addEventListener('click', exportKalenderKerjaToExcel);
+
+  // Initial load + subscribe overrides
+  loadKalKerjaOverrides().then(() => renderKalenderKerjaGrid());
+}
+
+async function loadKalKerjaOverrides() {
+  const s = kalKerjaState();
+  const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
+  try {
+    const snap = await getDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId));
+    STATE.kalKerjaOverrides = snap.exists() ? (snap.data().overrides || {}) : {};
+  } catch (err) {
+    console.error('Gagal load overrides', err);
+    STATE.kalKerjaOverrides = {};
+  }
+}
+
+async function saveKalKerjaOverride(key, value) {
+  const s = kalKerjaState();
+  const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
+  STATE.kalKerjaOverrides[key] = value;
+  try {
+    await setDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId), {
+      overrides: STATE.kalKerjaOverrides,
+      updatedAt: serverTimestamp(),
+      updatedBy: STATE.currentMember?.name || '?',
+    }, { merge: true });
+  } catch (err) {
+    toast('Gagal save: ' + err.message, 'error');
+  }
+}
+
+function renderKalenderKerjaGrid() {
+  const root = document.getElementById('kalkerja-grid-root');
+  if (!root) return;
+  const s = kalKerjaState();
+  const daysInMonth = new Date(s.year, s.month, 0).getDate();
+  const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+  // Members yang ditampilkan
+  const targetMembers = s.memberFilter
+    ? STATE.members.filter(m => m.id === s.memberFilter)
+    : STATE.members.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  if (targetMembers.length === 0) {
+    root.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Tidak ada anggota.</div>`;
+    return;
+  }
+
+  let html = `<div style="font-family:var(--font-mono);font-size:11px;overflow-x:auto">`;
+  targetMembers.forEach(m => {
+    html += `<div class="kalkerja-section" style="margin-bottom:30px">
+      <h2 style="font-size:16px;font-weight:700;margin-bottom:8px;padding:8px 12px;background:var(--primary);color:white;border-radius:6px;text-transform:uppercase;display:inline-block">${escapeHtml(m.name)}</h2>
+      <div style="overflow-x:auto">
+        <table class="kalkerja-table" style="border-collapse:collapse;font-size:11px;min-width:100%;white-space:nowrap">
+          <thead>
+            <tr style="background:#f3f4f6">
+              <th style="border:1px solid var(--border);padding:6px 8px;position:sticky;left:0;background:#f3f4f6;z-index:2;min-width:90px">Hari</th>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(s.year, s.month - 1, d);
+      const dayName = dayNames[dt.getDay()].slice(0, 3); // Sen, Sel, ...
+      const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+      html += `<th style="border:1px solid var(--border);padding:6px 4px;${isWeekend ? 'background:#fee2e2;color:#991b1b' : ''}">${dayName}</th>`;
+    }
+    html += `</tr>
+            <tr style="background:#f9fafb">
+              <th style="border:1px solid var(--border);padding:6px 8px;position:sticky;left:0;background:#f9fafb;z-index:2">Tanggal</th>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(s.year, s.month - 1, d);
+      const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+      html += `<th style="border:1px solid var(--border);padding:6px 4px;font-weight:700;${isWeekend ? 'background:#fee2e2;color:#991b1b' : ''}">${d}</th>`;
+    }
+    html += `</tr></thead><tbody>`;
+
+    KALKERJA_TIME_SLOTS.forEach(slot => {
+      const isLunch = slot.lunch;
+      html += `<tr>
+        <td style="border:1px solid var(--border);padding:6px 8px;font-weight:600;position:sticky;left:0;background:white;z-index:1;${isLunch ? 'background:#fef3c7' : ''}">${slot.label}</td>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dt = new Date(s.year, s.month - 1, d);
+        const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+        const content = kalKerjaCellContent(m.id, s.year, s.month, d, slot.label);
+        const overrideKey = `${s.year}-${String(s.month).padStart(2,'0')}-${m.id}-${String(d).padStart(2,'0')}-${slot.label}`;
+        const hasOverride = STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined;
+        let cellBg = '';
+        if (isLunch) cellBg = 'background:#fef3c7;font-weight:600;text-align:center;color:#92400e';
+        else if (content === 'Libur') cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
+        else if (isWeekend) cellBg = 'background:#fef2f2';
+        else if (hasOverride) cellBg = 'background:#dbeafe;border-left:3px solid #2563eb';
+        const editable = !isLunch ? `contenteditable="true" data-kk-edit="${overrideKey}"` : '';
+        const titleAttr = !isLunch ? `title="Klik buat edit (override auto-fill)"` : '';
+        html += `<td style="border:1px solid var(--border);padding:4px 6px;min-width:80px;max-width:120px;overflow:hidden;text-overflow:ellipsis;${cellBg}" ${editable} ${titleAttr}>${escapeHtml(content)}</td>`;
+      }
+      html += `</tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  });
+  html += `</div>`;
+  root.innerHTML = html;
+
+  // Bind editable cells
+  root.querySelectorAll('[data-kk-edit]').forEach(cell => {
+    const key = cell.dataset.kkEdit;
+    let original = cell.textContent;
+    cell.addEventListener('focus', () => { original = cell.textContent; });
+    cell.addEventListener('blur', async () => {
+      const newVal = cell.textContent.trim();
+      if (newVal === original) return;
+      await saveKalKerjaOverride(key, newVal);
+      toast('Override tersimpan', 'success');
+    });
+    cell.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        cell.blur();
+      } else if (e.key === 'Escape') {
+        cell.textContent = original;
+        cell.blur();
+      }
+    });
+  });
+}
+
+function exportKalenderKerjaToExcel() {
+  if (typeof XLSX === 'undefined') {
+    toast('Library XLSX belum loaded, refresh dulu', 'error');
+    return;
+  }
+  const s = kalKerjaState();
+  const daysInMonth = new Date(s.year, s.month, 0).getDate();
+  const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const monthsId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const monthLabel = `${monthsId[s.month - 1]} ${s.year}`;
+  const targetMembers = s.memberFilter
+    ? STATE.members.filter(m => m.id === s.memberFilter)
+    : STATE.members.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const aoa = []; // array of arrays
+  // Title row
+  aoa.push([`KALENDER KERJA APOTEKKU — B2C ONLINE & OPTIMIZE — ${monthLabel}`]);
+  aoa.push([]);
+
+  targetMembers.forEach(m => {
+    aoa.push([m.name.toUpperCase()]);
+    aoa.push([]);
+    // Header Hari
+    const hariRow = ['Hari'];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(s.year, s.month - 1, d);
+      hariRow.push(dayNames[dt.getDay()]);
+    }
+    aoa.push(hariRow);
+    // Header Tanggal
+    const tglRow = ['Tanggal'];
+    for (let d = 1; d <= daysInMonth; d++) tglRow.push(d);
+    aoa.push(tglRow);
+    // Header JAM
+    const jamRow = ['JAM'];
+    for (let d = 1; d <= daysInMonth; d++) jamRow.push('');
+    aoa.push(jamRow);
+    // Body
+    KALKERJA_TIME_SLOTS.forEach(slot => {
+      const row = [slot.label];
+      for (let d = 1; d <= daysInMonth; d++) {
+        row.push(kalKerjaCellContent(m.id, s.year, s.month, d, slot.label));
+      }
+      aoa.push(row);
+    });
+    aoa.push([]);
+    aoa.push([]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // Set column widths (col A = 14, rest = 22)
+  const cols = [{ wch: 14 }];
+  for (let i = 0; i < daysInMonth; i++) cols.push({ wch: 22 });
+  ws['!cols'] = cols;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Kalender Kerja');
+  const filename = `Kalender_Kerja_${monthsId[s.month-1]}_${s.year}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  toast(`File ${filename} di-download`, 'success');
+}
+
 function renderRecapCalendarHtml() {
   const month = getActiveCalendarMonth();
   const [y, m] = month.split('-').map(Number);
@@ -4672,7 +5009,15 @@ function renderRecapCalendarGrid() {
         d.setDate(d.getDate() + 1);
       }
     } else {
-      if (t.date) (tasksByDate[t.date] ||= []).push(t);
+      // v2.31: task done dengan completedAt → group by tanggal SELESAI (bukan scheduled).
+      // Akibatnya: task yg scheduled kemarin tapi baru di-Selesai-kan hari ini → masuk kotak hari ini.
+      // Task non-done atau done tanpa completedAt → tetap pakai scheduled date.
+      let key = t.date;
+      if (t.status === 'done' && t.completedAt) {
+        const completedDay = tsToLocalDateStr(t.completedAt);
+        if (completedDay) key = completedDay;
+      }
+      if (key) (tasksByDate[key] ||= []).push(t);
     }
   });
 
@@ -5749,9 +6094,14 @@ function renderNotDoneList() {
       if (!confirm(`HAPUS PERMANEN task "${t.title}"?\n\nIni tidak bisa di-undo. Lebih baik pilih "Kembalikan ke Kanban" kalau masih perlu.`)) return;
       try {
         if (t.fromTemplateId) {
-          // Soft-delete supaya gak ke-generate ulang oleh template
+          // v2.30: Soft-delete + clear flag notCompleted biar gak nyangkut di badge sidebar
+          // (task isDeleted=true tetap di Firestore supaya template gak re-generate, tapi notCompleted di-clear)
           await updateDoc(doc(STATE.db, 'tasks', taskId), {
             isDeleted: true,
+            notCompleted: false,
+            kendala: null,
+            notCompletedAt: null,
+            notCompletedBy: null,
             updatedAt: serverTimestamp(),
           });
         } else {
@@ -6089,7 +6439,8 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'notdone' ? 'active' : ''}" data-nav="notdone">
             <span class="sidebar-nav-icon">🚫</span>Tidak Selesai
             ${(() => {
-              const n = STATE.tasks.filter(t => t.notCompleted === true).length;
+              // v2.30 FIX: SAMA dengan updateSidebarBadges & renderNotDoneList → skip task yg isDeleted
+              const n = STATE.tasks.filter(t => t.notCompleted === true && t.isDeleted !== true).length;
               return n > 0 ? `<span class="sidebar-nav-badge" style="background:#dc2626">${n > 99 ? '99+' : n}</span>` : '';
             })()}
           </button>
@@ -6103,6 +6454,9 @@ function renderMain() {
           <div class="sidebar-nav-section">Tools</div>
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
+          </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'kalkerja' ? 'active' : ''}" data-nav="kalkerja">
+            <span class="sidebar-nav-icon">📋</span>Kalender Kerja
           </button>
           <button class="sidebar-nav-item" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
@@ -6150,7 +6504,9 @@ function renderMain() {
               ? renderProjectPageHtml()
               : (STATE.currentView === 'notdone'
                 ? renderNotDonePageHtml()
-                : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))}
+                : (STATE.currentView === 'kalkerja'
+                  ? renderKalenderKerjaPageHtml()
+                  : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))))}
         </div>
       </main>
       <!-- v2.26: Floating Chat Button + Panel -->
@@ -6217,8 +6573,8 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // v2.26: View switches — calendar gabung ke recap, chat jadi FAB
-      if (target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone') {
+      // v2.26-v2.32: View switches
+      if (target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -6254,6 +6610,10 @@ function renderMain() {
   if (STATE.currentView === 'notdone') {
     bindNotDonePage();
     renderNotDoneList();
+  }
+  // v2.32: Kalender Kerja Bulanan
+  if (STATE.currentView === 'kalkerja') {
+    bindKalenderKerjaPage();
   }
 
   // Logout
