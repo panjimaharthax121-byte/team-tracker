@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.29 — ApotekKu</title>
+<title>Team Tracker v2.30 — ApotekKu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2748,7 +2748,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2760,6 +2760,20 @@ const AVATAR_COLORS = [
    ============================================================= */
 function todayStr() {
   const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+// v2.30: Convert Firestore Timestamp / number / string → YYYY-MM-DD (local time)
+function tsToLocalDateStr(ts) {
+  if (!ts) return '';
+  let d;
+  if (typeof ts === 'string') return ts.slice(0, 10);
+  if (typeof ts === 'number') d = new Date(ts);
+  else if (ts.toDate) d = ts.toDate();
+  else if (ts.seconds) d = new Date(ts.seconds * 1000);
+  else return '';
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -3134,6 +3148,55 @@ function handleNewTaskNotif(taskDoc) {
     onClick: () => openTaskModal(taskId),
   });
   playNotifSound();
+}
+
+// v2.30: Notif khusus ke ADMIN saat member mark task sebagai "Tidak Selesai"
+function handleNotCompletedNotif(task) {
+  const me = STATE.currentMember;
+  if (!me) return;
+  // Cuma fire kalau current viewer adalah admin
+  if (me.role !== 'admin') return;
+  // Skip kalau admin sendiri yang mark (gak perlu notif diri sendiri)
+  const markedBy = task.notCompletedBy;
+  if (markedBy && markedBy.id === me.id) return;
+  const s = STATE.notifSettings;
+  if (!s || !s.enabled) return;
+
+  const byName = markedBy?.name || 'Seseorang';
+  const reason = (task.kendala || '').slice(0, 100);
+  const taskId = task.id;
+  showNotif(`🚫 Task ditandai Tidak Selesai`, `${byName}: "${task.title}" — ${reason}`, {
+    tag: `notdone-${task.id}`,
+    type: 'start', // warna oranye/merah biar prominent
+    icon: '🚫',
+    onClick: () => {
+      STATE.currentView = 'notdone';
+      renderMain();
+    },
+  });
+  playNotifSound();
+}
+
+// v2.30: Update sidebar badges count real-time (Tidak Selesai)
+// Dipanggil dari subscribeTasks callback. Inline update DOM tanpa renderMain (lebih cepat & gak rese-input).
+function updateSidebarBadges() {
+  // Badge "Tidak Selesai"
+  const notdoneBtn = document.querySelector('[data-nav="notdone"]');
+  if (notdoneBtn) {
+    const count = STATE.tasks.filter(t => t.notCompleted === true && t.isDeleted !== true).length;
+    let badge = notdoneBtn.querySelector('.sidebar-nav-badge');
+    if (count > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'sidebar-nav-badge';
+        badge.style.background = '#dc2626';
+        notdoneBtn.appendChild(badge);
+      }
+      badge.textContent = count > 99 ? '99+' : String(count);
+    } else if (badge) {
+      badge.remove();
+    }
+  }
 }
 
 // === Permission helpers ===
@@ -3829,9 +3892,11 @@ function visibleTasks() {
     if (t.date === sel) return true;
     // v2.29: Rollover SEMUA task non-done (termasuk dari template harian).
     // User aware via badge khusus "🔁 Template kemarin belum eksekusi" vs "🔁 Carry-over dari DD/MM".
-    // (Update dari v2.19: task fromTemplate dulu tidak rollover. User pilih opsi double display
-    //  + label jelas — biar tugas kemarin yg belum dieksekusi tetap terlihat di hari ini.)
     if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
+    // v2.30 FIX: Task carry-over yang baru diselesaikan HARI INI tetap muncul di kolom DONE today.
+    // Sebelumnya: task done dengan date kemarin gak muncul di view today → user klik selesai trus task hilang.
+    if (isToday && t.status === 'done' && t.date && t.date < today
+        && t.completedAt && tsToLocalDateStr(t.completedAt) === today) return true;
     return false;
   });
 }
@@ -3845,8 +3910,18 @@ function subscribeTasks() {
   STATE.unsubTasks = onSnapshot(q, async (snap) => {
     // Detect new task added (kecuali first load) → trigger notif
     if (!firstSnap) {
+      // v2.30: snapshot task LAMA (sebelum update) — disimpan buat detect transisi notCompleted
+      const prevTasksMap = new Map(STATE.tasks.map(t => [t.id, t]));
       snap.docChanges().forEach(change => {
         if (change.type === 'added') handleNewTaskNotif(change.doc);
+        // v2.30: detect task baru di-mark notCompleted → notif ke admin
+        if (change.type === 'modified') {
+          const newT = { id: change.doc.id, ...change.doc.data() };
+          const oldT = prevTasksMap.get(newT.id);
+          if (oldT && !oldT.notCompleted && newT.notCompleted === true) {
+            handleNotCompletedNotif(newT);
+          }
+        }
       });
     }
 
@@ -3863,6 +3938,8 @@ function subscribeTasks() {
     renderProjectList();
     // refresh list "Tidak Selesai" kalau lagi di view itu
     if (STATE.currentView === 'notdone') renderNotDoneList();
+    // v2.30: refresh sidebar badges (count "Tidak Selesai") real-time
+    updateSidebarBadges();
 
     // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
