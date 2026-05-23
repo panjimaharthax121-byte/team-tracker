@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.32 — ApotekKu</title>
+<title>Team Tracker v2.35 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2654,6 +2654,7 @@ const STATE = {
   chatPanelOpen: false,         // v2.26 — apakah popup chat lagi visible
   kalKerja: null,               // v2.32 — { year, month, memberFilter } state Kalender Kerja
   kalKerjaOverrides: {},        // v2.32 — { '2026-05-memberid-DD-slot': 'override value' } loaded dari Firestore
+  kalKerjaHolidays: {},         // v2.34 — { 'YYYY-MM-DD': 'nama libur' } global holidays
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -3944,6 +3945,9 @@ function subscribeTasks() {
     if (STATE.currentView === 'notdone') renderNotDoneList();
     // v2.30: refresh sidebar badges (count "Tidak Selesai") real-time
     updateSidebarBadges();
+    // v2.34: invalidate Kalender Kerja schedule cache & re-render kalau lagi di view itu
+    if (typeof kalKerjaInvalidateCache === 'function') kalKerjaInvalidateCache();
+    if (STATE.currentView === 'kalkerja') renderKalenderKerjaGrid();
 
     // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
@@ -4652,61 +4656,131 @@ function kalKerjaState() {
   return STATE.kalKerja;
 }
 
-// Auto-fill: cari task assigneeId=member, date di year-month-day, return array task per slot
-function kalKerjaAutoFill(memberId, year, month, day, slotLabel) {
-  const slot = KALKERJA_TIME_SLOTS.find(s => s.label === slotLabel);
-  if (!slot) return [];
-  if (slot.lunch) return []; // slot lunch locked
+// v2.34: helper jam (HH:MM arithmetic)
+function kalKerjaAddMinutes(hhmm, mins) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = h * 60 + m + mins;
+  const newH = Math.max(0, Math.min(23, Math.floor(total / 60)));
+  const newM = ((total % 60) + 60) % 60;
+  return `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+}
+
+// v2.34: detect libur
+function kalKerjaIsHoliday(dateStr) {
+  return STATE.kalKerjaHolidays && STATE.kalKerjaHolidays[dateStr] !== undefined;
+}
+function kalKerjaHolidayName(dateStr) {
+  if (kalKerjaIsHoliday(dateStr)) return STATE.kalKerjaHolidays[dateStr];
+  const dt = new Date(dateStr);
+  const dow = dt.getDay();
+  if (dow === 0) return 'Libur Minggu';
+  if (dow === 6) return 'Libur Sabtu';
+  return null;
+}
+function kalKerjaIsLiburDay(dateStr) {
+  return kalKerjaHolidayName(dateStr) !== null;
+}
+
+// v2.34: Schedule task ke time slot untuk SATU hari + 1 member.
+// Logic baru:
+//   1. Pisah task: timed (punya startTime) vs untimed
+//   2. Timed task: spread ke SEMUA slot yg overlap [startTime, endTime] — task multi-jam isi multiple slot
+//   3. Untimed task: pack ke slot kosong satu per satu, mulai dari pagi (08-09)
+//   4. Hasil: setiap slot bisa berisi 1 atau lebih task (kalau memang barengan)
+// Cache: keyed by member+year+month+day → invalidate saat data berubah
+const kalKerjaCacheBox = { map: new Map(), version: 0 };
+function kalKerjaInvalidateCache() {
+  kalKerjaCacheBox.map.clear();
+  kalKerjaCacheBox.version++;
+}
+function kalKerjaScheduleDay(memberId, year, month, day) {
+  const cacheKey = `${memberId}|${year}|${month}|${day}|v${kalKerjaCacheBox.version}`;
+  if (kalKerjaCacheBox.map.has(cacheKey)) return kalKerjaCacheBox.map.get(cacheKey);
+
   const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const result = {};
+  KALKERJA_TIME_SLOTS.forEach(slot => { result[slot.label] = []; });
+
+  // Get tasks for member at this date (semua status: todo/proses/done; skip notCompleted+deleted)
   const tasks = STATE.tasks.filter(t => {
     if (t.isDeleted === true || t.notCompleted === true) return false;
     if (t.assigneeId !== memberId) return false;
     if (!t.date) return false;
-    // Task project: include kalau day di antara date & dueDate
     if (t.isProject) {
       const start = t.date;
       const end = t.dueDate || t.date;
-      if (dateStr < start || dateStr > end) return false;
-    } else {
-      if (t.date !== dateStr) return false;
+      return dateStr >= start && dateStr <= end;
     }
-    // Time slot match — task overlap dengan slot
-    const startTime = t.startTime || KALKERJA_DEFAULT_SLOT.split('-')[0]; // task tanpa jam → default 08:00
-    const endTime = t.endTime || (() => {
-      // Kalau gak ada endTime, default endTime = startTime+1jam (atau slot default 09:00)
-      if (t.startTime) {
-        const [h, m] = t.startTime.split(':').map(Number);
-        return `${String(h+1).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
-      }
-      return KALKERJA_DEFAULT_SLOT.split('-')[1];
-    })();
-    // Spread: task overlap kalau startTime < slot.end AND endTime > slot.start
-    return startTime < slot.end && endTime > slot.start;
+    return t.date === dateStr;
   });
-  return tasks;
+
+  // Separate timed vs untimed
+  const timed = [];
+  const untimed = [];
+  tasks.forEach(t => {
+    if (t.startTime) {
+      const start = t.startTime;
+      const end = t.endTime || kalKerjaAddMinutes(start, 60); // default duration 60m
+      timed.push({ task: t, start, end });
+    } else {
+      untimed.push(t);
+    }
+  });
+
+  // Place timed tasks (spread ke semua slot overlap)
+  timed.sort((a, b) => a.start.localeCompare(b.start));
+  timed.forEach(({ task, start, end }) => {
+    KALKERJA_TIME_SLOTS.forEach(slot => {
+      if (slot.lunch) return;
+      if (start < slot.end && end > slot.start) {
+        result[slot.label].push(task);
+      }
+    });
+  });
+
+  // Place untimed tasks ke slot KOSONG, 1 task per slot, mulai pagi.
+  // Goal: hari kerja "tidak bolong-bolong" — task tanpa jam ngisi gap.
+  let untimedIdx = 0;
+  for (const slot of KALKERJA_TIME_SLOTS) {
+    if (slot.lunch) continue;
+    if (untimedIdx >= untimed.length) break;
+    if (result[slot.label].length === 0) {
+      result[slot.label].push(untimed[untimedIdx]);
+      untimedIdx++;
+    }
+  }
+  // Sisa untimed yg gak muat (kalau task > slot kosong) → tumpuk di slot pertama yg kosong atau slot 16-17
+  while (untimedIdx < untimed.length) {
+    // Cari slot last non-lunch — tumpuk semua sisa ke sana
+    const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
+    result[lastSlot.label].push(untimed[untimedIdx]);
+    untimedIdx++;
+  }
+
+  kalKerjaCacheBox.map.set(cacheKey, result);
+  return result;
 }
 
 function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
   const slot = KALKERJA_TIME_SLOTS.find(s => s.label === slotLabel);
   if (!slot) return '';
   if (slot.lunch) return 'MAKAN SIANG';
-  // Cek override dulu
+  // Cek override dulu (manual edit)
   const overrideKey = `${year}-${String(month).padStart(2,'0')}-${memberId}-${String(day).padStart(2,'0')}-${slotLabel}`;
   if (STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined) {
     return STATE.kalKerjaOverrides[overrideKey];
   }
-  // Auto-fill
-  const tasks = kalKerjaAutoFill(memberId, year, month, day, slotLabel);
-  if (tasks.length === 0) {
-    // Sabtu/Minggu default "Libur"
-    const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    const dt = new Date(dateStr);
-    const dayOfWeek = dt.getDay(); // 0 = Sun, 6 = Sat
-    if (dayOfWeek === 0 || dayOfWeek === 6) return 'Libur';
-    return '';
+  // Hari libur (weekend atau tanggal merah custom)
+  const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  if (kalKerjaIsLiburDay(dateStr)) {
+    return kalKerjaHolidayName(dateStr) || 'Libur';
   }
-  // Join multiple tasks dengan ' + ', truncate
-  return tasks.map(t => (t.title || '').slice(0, 40)).join(' + ');
+  // Schedule day → ambil tasks utk slot ini
+  const schedule = kalKerjaScheduleDay(memberId, year, month, day);
+  const tasksAtSlot = schedule[slotLabel] || [];
+  if (tasksAtSlot.length === 0) return '';
+  // Multiple task di 1 slot → join dengan ' + ' (kalau memang barengan)
+  return tasksAtSlot.map(t => t.title || '').join(' + ');
 }
 
 function renderKalenderKerjaPageHtml() {
@@ -4726,7 +4800,8 @@ function renderKalenderKerjaPageHtml() {
         <h1 class="page-title">📋 Kalender Kerja Bulanan</h1>
         <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Format laporan kalender kerja untuk direktur — auto-fill dari data Team Tracker, bisa di-edit per cell.</div>
       </div>
-      <div class="page-toolbar">
+      <div class="page-toolbar" style="display:flex;gap:8px">
+        <button class="btn btn-secondary" id="btn-kalkerja-holidays">🗓️ Atur Hari Libur</button>
         <button class="btn btn-success" id="btn-kalkerja-excel">📥 Download Excel</button>
       </div>
     </div>
@@ -4768,9 +4843,13 @@ function bindKalenderKerjaPage() {
   if (yearEl) yearEl.addEventListener('change', () => { s.year = parseInt(yearEl.value, 10); refresh(); });
   if (memberEl) memberEl.addEventListener('change', () => { s.memberFilter = memberEl.value || null; refresh(); });
   if (excelBtn) excelBtn.addEventListener('click', exportKalenderKerjaToExcel);
+  const holBtn = document.getElementById('btn-kalkerja-holidays');
+  if (holBtn) holBtn.addEventListener('click', openHolidaysModal);
 
-  // Initial load + subscribe overrides
-  loadKalKerjaOverrides().then(() => renderKalenderKerjaGrid());
+  // Initial load — overrides + holidays
+  Promise.all([loadKalKerjaOverrides(), loadKalKerjaHolidays()]).then(() => {
+    renderKalenderKerjaGrid();
+  });
 }
 
 async function loadKalKerjaOverrides() {
@@ -4783,6 +4862,131 @@ async function loadKalKerjaOverrides() {
     console.error('Gagal load overrides', err);
     STATE.kalKerjaOverrides = {};
   }
+}
+
+// v2.34: load global holidays (tanggal merah) dari Firestore
+async function loadKalKerjaHolidays() {
+  try {
+    const snap = await getDoc(doc(STATE.db, 'appConfig', 'kalKerjaHolidays'));
+    STATE.kalKerjaHolidays = snap.exists() ? (snap.data().holidays || {}) : {};
+  } catch (err) {
+    console.error('Gagal load holidays', err);
+    STATE.kalKerjaHolidays = {};
+  }
+  kalKerjaInvalidateCache();
+}
+async function saveKalKerjaHolidays() {
+  try {
+    await setDoc(doc(STATE.db, 'appConfig', 'kalKerjaHolidays'), {
+      holidays: STATE.kalKerjaHolidays,
+      updatedAt: serverTimestamp(),
+      updatedBy: STATE.currentMember?.name || '?',
+    });
+    kalKerjaInvalidateCache();
+  } catch (err) {
+    toast('Gagal save: ' + err.message, 'error');
+  }
+}
+
+// v2.34: Modal "Atur Hari Libur"
+function openHolidaysModal() {
+  const isAdmin = STATE.currentMember?.role === 'admin';
+  const holidays = STATE.kalKerjaHolidays || {};
+  const sortedKeys = Object.keys(holidays).sort();
+  const rows = sortedKeys.length === 0
+    ? `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-muted)">Belum ada tanggal libur tersimpan.</td></tr>`
+    : sortedKeys.map(date => {
+        const name = holidays[date];
+        const dt = new Date(date);
+        const dayName = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'][dt.getDay()];
+        return `
+          <tr>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:13px">${date} (${dayName})</td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px">${escapeHtml(name)}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:right">
+              ${isAdmin ? `<button class="btn btn-ghost btn-sm" data-holiday-del="${date}">🗑️</button>` : '<span style="font-size:11px;color:var(--text-muted)">read-only</span>'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">🗓️ Atur Hari Libur / Tanggal Merah</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+        Tanggal yang di-set di sini akan otomatis ditandai <strong>"Libur"</strong> di Kalender Kerja Bulanan (semua member). Cocok untuk: Hari Raya, Cuti Bersama, Libur Khusus.
+        ${isAdmin ? '' : '<br><strong>🔒 Hanya admin yang bisa edit.</strong>'}
+      </div>
+
+      ${isAdmin ? `
+        <div style="background:#f9fafb;padding:12px 14px;border-radius:6px;margin-bottom:16px;border:1px solid var(--border)">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Tambah Tanggal Libur</div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:0 0 160px">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">Tanggal</label>
+              <input type="date" id="holiday-date" class="input" style="width:100%;padding:6px 10px;font-size:13px">
+            </div>
+            <div style="flex:1;min-width:200px">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">Nama / Keterangan</label>
+              <input type="text" id="holiday-name" class="input" placeholder="Mis: Hari Raya Galungan" style="width:100%;padding:6px 10px;font-size:13px">
+            </div>
+            <button class="btn btn-primary btn-sm" id="holiday-add">+ Tambah</button>
+          </div>
+        </div>
+      ` : ''}
+
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">📋 Daftar Hari Libur Tersimpan</div>
+      <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <thead style="background:#f3f4f6">
+          <tr>
+            <th style="padding:8px 12px;text-align:left;font-size:12px;border-bottom:1px solid var(--border)">Tanggal</th>
+            <th style="padding:8px 12px;text-align:left;font-size:12px;border-bottom:1px solid var(--border)">Nama</th>
+            <th style="padding:8px 12px;text-align:right;font-size:12px;border-bottom:1px solid var(--border);width:80px">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="holidays-tbody">${rows}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `;
+  showModal(html, { size: 'md' });
+
+  // Bind add
+  if (isAdmin) {
+    const addBtn = document.getElementById('holiday-add');
+    addBtn.addEventListener('click', async () => {
+      const dateEl = document.getElementById('holiday-date');
+      const nameEl = document.getElementById('holiday-name');
+      const date = dateEl.value;
+      const name = nameEl.value.trim();
+      if (!date) { toast('Tanggal wajib', 'error'); return; }
+      if (!name) { toast('Nama libur wajib', 'error'); return; }
+      STATE.kalKerjaHolidays[date] = name;
+      await saveKalKerjaHolidays();
+      toast(`Hari libur ${date} ditambahkan`, 'success');
+      closeModal();
+      openHolidaysModal(); // refresh list
+      renderKalenderKerjaGrid();
+    });
+  }
+  // Bind delete
+  document.querySelectorAll('[data-holiday-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const date = btn.dataset.holidayDel;
+      if (!confirm(`Hapus hari libur tanggal ${date}?`)) return;
+      delete STATE.kalKerjaHolidays[date];
+      await saveKalKerjaHolidays();
+      toast(`Hari libur ${date} dihapus`, 'success');
+      closeModal();
+      openHolidaysModal();
+      renderKalenderKerjaGrid();
+    });
+  });
 }
 
 async function saveKalKerjaOverride(key, value) {
@@ -4830,7 +5034,13 @@ function renderKalenderKerjaGrid() {
       const dt = new Date(s.year, s.month - 1, d);
       const dayName = dayNames[dt.getDay()].slice(0, 3); // Sen, Sel, ...
       const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
-      html += `<th style="border:1px solid var(--border);padding:6px 4px;${isWeekend ? 'background:#fee2e2;color:#991b1b' : ''}">${dayName}</th>`;
+      const dateStr = `${s.year}-${String(s.month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isCustomHoliday = kalKerjaIsHoliday(dateStr);
+      let bg = '';
+      if (isCustomHoliday) bg = 'background:#fecaca;color:#991b1b';
+      else if (isWeekend) bg = 'background:#fee2e2;color:#991b1b';
+      const tooltip = isCustomHoliday ? `title="${escapeHtml(STATE.kalKerjaHolidays[dateStr])}"` : '';
+      html += `<th style="border:1px solid var(--border);padding:6px 4px;${bg}" ${tooltip}>${dayName}${isCustomHoliday ? ' 🟥' : ''}</th>`;
     }
     html += `</tr>
             <tr style="background:#f9fafb">
@@ -4838,7 +5048,13 @@ function renderKalenderKerjaGrid() {
     for (let d = 1; d <= daysInMonth; d++) {
       const dt = new Date(s.year, s.month - 1, d);
       const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
-      html += `<th style="border:1px solid var(--border);padding:6px 4px;font-weight:700;${isWeekend ? 'background:#fee2e2;color:#991b1b' : ''}">${d}</th>`;
+      const dateStr = `${s.year}-${String(s.month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isCustomHoliday = kalKerjaIsHoliday(dateStr);
+      let bg = '';
+      if (isCustomHoliday) bg = 'background:#fecaca;color:#991b1b';
+      else if (isWeekend) bg = 'background:#fee2e2;color:#991b1b';
+      const tooltip = isCustomHoliday ? `title="${escapeHtml(STATE.kalKerjaHolidays[dateStr])}"` : '';
+      html += `<th style="border:1px solid var(--border);padding:6px 4px;font-weight:700;${bg}" ${tooltip}>${d}</th>`;
     }
     html += `</tr></thead><tbody>`;
 
@@ -4849,17 +5065,24 @@ function renderKalenderKerjaGrid() {
       for (let d = 1; d <= daysInMonth; d++) {
         const dt = new Date(s.year, s.month - 1, d);
         const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+        const dateStr = `${s.year}-${String(s.month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const isCustomHoliday = kalKerjaIsHoliday(dateStr); // v2.34: tanggal merah custom
         const content = kalKerjaCellContent(m.id, s.year, s.month, d, slot.label);
         const overrideKey = `${s.year}-${String(s.month).padStart(2,'0')}-${m.id}-${String(d).padStart(2,'0')}-${slot.label}`;
         const hasOverride = STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined;
+        const isLiburContent = content && (content === 'Libur' || content.toLowerCase().startsWith('libur'));
         let cellBg = '';
         if (isLunch) cellBg = 'background:#fef3c7;font-weight:600;text-align:center;color:#92400e';
-        else if (content === 'Libur') cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
+        else if (isCustomHoliday) cellBg = 'background:#fecaca;color:#991b1b;font-style:italic;text-align:center;font-weight:600'; // tanggal merah custom = bg merah
+        else if (isLiburContent) cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
         else if (isWeekend) cellBg = 'background:#fef2f2';
         else if (hasOverride) cellBg = 'background:#dbeafe;border-left:3px solid #2563eb';
         const editable = !isLunch ? `contenteditable="true" data-kk-edit="${overrideKey}"` : '';
-        const titleAttr = !isLunch ? `title="Klik buat edit (override auto-fill)"` : '';
-        html += `<td style="border:1px solid var(--border);padding:4px 6px;min-width:80px;max-width:120px;overflow:hidden;text-overflow:ellipsis;${cellBg}" ${editable} ${titleAttr}>${escapeHtml(content)}</td>`;
+        // v2.33: tooltip = full content + hint edit
+        const tooltipText = isLunch ? '' : (content ? `${content}\n\n(Klik untuk edit)` : '(Klik untuk isi manual)');
+        const titleAttr = !isLunch ? `title="${escapeHtml(tooltipText)}"` : '';
+        // v2.33: white-space:normal + word-break biar text wrap multi-line (gak truncate "...")
+        html += `<td style="border:1px solid var(--border);padding:4px 6px;min-width:120px;max-width:180px;white-space:normal;word-break:break-word;line-height:1.35;vertical-align:top;${cellBg}" ${editable} ${titleAttr}>${escapeHtml(content)}</td>`;
       }
       html += `</tr>`;
     });
@@ -4941,10 +5164,27 @@ function exportKalenderKerjaToExcel() {
   });
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  // Set column widths (col A = 14, rest = 22)
+  // Set column widths (col A = 14, rest = 30 biar judul task panjang lebih kelihatan)
   const cols = [{ wch: 14 }];
-  for (let i = 0; i < daysInMonth; i++) cols.push({ wch: 22 });
+  for (let i = 0; i < daysInMonth; i++) cols.push({ wch: 30 });
   ws['!cols'] = cols;
+  // v2.33: set wrapText untuk semua cell biar judul panjang ke-wrap (multi-line) di Excel
+  const ref = ws['!ref'];
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref);
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[cellAddr];
+        if (cell) {
+          cell.s = cell.s || {};
+          cell.s.alignment = { wrapText: true, vertical: 'top' };
+        }
+      }
+    }
+  }
+  // Row height default biar bisa expand
+  ws['!rows'] = [];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Kalender Kerja');
   const filename = `Kalender_Kerja_${monthsId[s.month-1]}_${s.year}.xlsx`;
@@ -4992,34 +5232,47 @@ function renderRecapCalendarGrid() {
   const startWeekday = firstDay.getDay(); // 0 = Sun
   const daysInMonth = new Date(y, m, 0).getDate();
   const today = todayStr();
-  // v2.27: pakai helper khusus kalender (skip from/to filter)
-  const filtered = getCalendarRecapTasks();
+  // v2.35: pakai isTaskActiveOnDay untuk visualisasi historis per hari.
+  // Setiap task aktif di hari tertentu (sesuai 4 case di user spec):
+  //   - Project: muncul setiap hari di range [date, dueDate] hingga done/notCompleted
+  //   - Non-project: muncul dari scheduled date sampai done/notCompleted/today (carry-over)
+  // Plus support Case 4: task yg punya event (marked_not_completed/restored/deleted) di hari itu juga muncul.
+  const filtered = getCalendarRecapTasks(); // sudah respect member/kategori/status/search filter
   const tasksByDate = {};
-  filtered.forEach(t => {
-    if (t.isProject) {
-      // distribute ke semua hari range
-      const start = t.date;
-      const end = t.dueDate || t.date;
-      if (!start) return;
-      let d = new Date(start);
-      const endD = new Date(end);
-      while (d <= endD) {
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        (tasksByDate[key] ||= []).push(t);
-        d.setDate(d.getDate() + 1);
-      }
-    } else {
-      // v2.31: task done dengan completedAt → group by tanggal SELESAI (bukan scheduled).
-      // Akibatnya: task yg scheduled kemarin tapi baru di-Selesai-kan hari ini → masuk kotak hari ini.
-      // Task non-done atau done tanpa completedAt → tetap pakai scheduled date.
-      let key = t.date;
-      if (t.status === 'done' && t.completedAt) {
-        const completedDay = tsToLocalDateStr(t.completedAt);
-        if (completedDay) key = completedDay;
-      }
-      if (key) (tasksByDate[key] ||= []).push(t);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    tasksByDate[dateStr] = [];
+  }
+  // Include also notCompleted/deleted tasks (untuk audit visualisasi Case 4) — bypass getCalendarRecapTasks yang skip notCompleted
+  const allTasksForCal = STATE.tasks.filter(t => {
+    // Apply same filters as getCalendarRecapTasks EXCEPT notCompleted/isDeleted
+    const rf = STATE.recapFilters;
+    if ((t.boardId || DEFAULT_BOARD_ID) !== STATE.currentBoardId) return false;
+    if (rf.memberId && t.assigneeId !== rf.memberId) return false;
+    if (rf.categoryId && t.category !== rf.categoryId) return false;
+    if (rf.status === 'unfinished' && t.status === 'done') return false;
+    else if (rf.status === 'todo' && t.status !== 'todo') return false;
+    else if (rf.status === 'proses' && t.status !== 'proses') return false;
+    else if (rf.status === 'done' && t.status !== 'done') return false;
+    if (rf.search) {
+      const q = rf.search.toLowerCase();
+      const match = (t.title || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
+      if (!match) return false;
     }
+    return true;
   });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    allTasksForCal.forEach(t => {
+      // Aktif di hari ini? (skip isDeleted check di dalam isTaskActiveOnDay supaya bisa show event di hari deletion)
+      const tCopy = { ...t, isDeleted: false }; // bypass isDeleted check
+      const isActive = isTaskActiveOnDay(tCopy, dateStr, today);
+      const hasEvent = taskHasEventOnDay(t, dateStr);
+      if (isActive || hasEvent) {
+        tasksByDate[dateStr].push({ task: t, derivedStatus: deriveTaskStatusOnDay(t, dateStr), hasEvent });
+      }
+    });
+  }
 
   const dayLabels = ['M', 'S', 'S', 'R', 'K', 'J', 'S'];
   let html = '<div class="calendar-grid">';
@@ -5028,9 +5281,13 @@ function renderRecapCalendarGrid() {
   for (let i = 0; i < startWeekday; i++) html += '<div class="calendar-day calendar-day-empty"></div>';
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const dayTasks = tasksByDate[dateStr] || [];
-    const total = dayTasks.length;
-    const doneCount = dayTasks.filter(t => t.status === 'done').length;
+    const dayItems = tasksByDate[dateStr] || []; // [{task, derivedStatus, hasEvent}]
+    const total = dayItems.length;
+    const doneCount = dayItems.filter(it => it.derivedStatus === 'done').length;
+    const prosesCount = dayItems.filter(it => it.derivedStatus === 'proses').length;
+    const todoCount = dayItems.filter(it => it.derivedStatus === 'todo').length;
+    const notDoneCount = dayItems.filter(it => it.derivedStatus === 'notCompleted').length;
+    const eventCount = dayItems.filter(it => it.hasEvent).length;
     const pct = total > 0 ? Math.round(doneCount * 100 / total) : 0;
     const isToday = dateStr === today;
     // intensity bg color (hijau makin tua kalau % done tinggi)
@@ -5041,10 +5298,19 @@ function renderRecapCalendarGrid() {
            pct >= 40 ? `rgba(245, 158, 11, ${intensity + 0.1})` :
                        `rgba(220, 38, 38, ${intensity + 0.05})`;
     }
+    // v2.35: mini-badge per status di kotak hari
+    const statusMini = total > 0 ? `
+      <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:center;margin-top:2px;font-size:9px">
+        ${doneCount > 0 ? `<span style="background:#10b981;color:white;padding:1px 4px;border-radius:8px" title="${doneCount} done">✓${doneCount}</span>` : ''}
+        ${prosesCount > 0 ? `<span style="background:#f59e0b;color:white;padding:1px 4px;border-radius:8px" title="${prosesCount} proses">🔄${prosesCount}</span>` : ''}
+        ${todoCount > 0 ? `<span style="background:#3b82f6;color:white;padding:1px 4px;border-radius:8px" title="${todoCount} todo">📋${todoCount}</span>` : ''}
+        ${notDoneCount > 0 ? `<span style="background:#dc2626;color:white;padding:1px 4px;border-radius:8px" title="${notDoneCount} tidak selesai">🚫${notDoneCount}</span>` : ''}
+      </div>
+    ` : '';
     html += `
       <div class="calendar-day ${isToday ? 'calendar-day-today' : ''}" data-cal-day="${dateStr}" style="background:${bg};cursor:pointer">
-        <div class="calendar-day-num">${d}</div>
-        ${total > 0 ? `<div class="calendar-day-stats" style="font-size:10px;line-height:1.3"><strong>${doneCount}/${total}</strong> · ${pct}%</div>` : ''}
+        <div class="calendar-day-num">${d}${eventCount > 0 ? `<span title="${eventCount} event di hari ini (mark/restore/delete)" style="margin-left:3px;font-size:9px;color:#dc2626">●</span>` : ''}</div>
+        ${total > 0 ? `<div class="calendar-day-stats" style="font-size:10px;line-height:1.3"><strong>${doneCount}/${total}</strong></div>${statusMini}` : ''}
       </div>
     `;
   }
@@ -5079,20 +5345,15 @@ function getFilteredRecapTasks() {
   const singleDay = rf.from && rf.to && rf.from === rf.to;
   if (singleDay) {
     const target = rf.from;
-    const isToday = target === today;
+    // v2.35: pakai isTaskActiveOnDay — match logic kalender + carry-over + project range + notCompleted history
+    // Plus include task yang punya event (notCompleted/restore/deleted) di hari itu (Case 4)
     tasks = tasks.filter(t => {
-      // Task proyek: include kalau target ada di dalam range [date, dueDate]
-      if (t.isProject) {
-        const start = t.date || '';
-        const end = t.dueDate || t.date || '';
-        return start <= target && end >= target;
-      }
-      // Task biasa: exact match
-      if ((t.date || '') === target) return true;
-      // v2.29: Carry-over kalau target == today — termasuk dari template (konsisten dengan kanban).
-      if (isToday && t.status !== 'done' && t.date && t.date < today) return true;
+      if (isTaskActiveOnDay(t, target, today)) return true;
+      if (taskHasEventOnDay(t, target)) return true;
       return false;
     });
+    // Enrich dengan derivedStatus untuk display di tabel
+    tasks = tasks.map(t => ({ ...t, _derivedStatus: deriveTaskStatusOnDay(t, target) }));
   } else {
     if (rf.from) tasks = tasks.filter(t => {
       if (t.isProject) {
@@ -5138,6 +5399,88 @@ function getFilteredRecapTasks() {
 
 // v2.27: Helper untuk kalender — SKIP filter from/to (kalender = overview bulanan,
 // gak boleh ke-restrict by date picker). Filter member/kategori/status/search tetap apply.
+// v2.35: Derive status task pada hari tertentu dari activity log.
+// Default fallback ke status sekarang kalau gak ada activity log atau kalau day = today/future.
+function deriveTaskStatusOnDay(task, dayStr) {
+  const today = todayStr();
+  // Untuk hari ini & masa depan, pakai status sekarang (apa adanya)
+  if (dayStr >= today) {
+    if (task.notCompleted === true) return 'notCompleted';
+    return task.status || 'todo';
+  }
+  // Untuk hari lampau, derive dari activity log
+  const activities = (task.activity || []).slice()
+    .filter(a => a && a.at && typeof a.at === 'string')
+    .sort((a, b) => (a.at || '').localeCompare(b.at || ''));
+  let status = 'todo'; // default awal task
+  for (const act of activities) {
+    const actDate = (a => a && a.length >= 10 ? a.slice(0, 10) : '')(act.at);
+    if (actDate > dayStr) break; // skip future activities (relatif ke dayStr)
+    if (act.type === 'status_changed' && act.to) status = act.to;
+    else if (act.type === 'marked_not_completed') status = 'notCompleted';
+    else if (act.type === 'restored_from_not_completed') status = act.to || 'todo';
+    else if (act.type === 'task_deleted') status = 'deleted';
+  }
+  return status;
+}
+
+// v2.35: Apakah task aktif (relevan) pada hari dayStr?
+//   - Project: dayStr di range [date, dueDate], BELUM done sebelum dayStr
+//   - Non-project: dayStr >= task.date, BELUM done atau notCompleted sebelum dayStr
+//     - Done: aktif hanya sampai completedAt date (termasuk)
+//     - notCompleted: aktif sampai notCompletedAt date (termasuk)
+//     - Pending: aktif dari task.date sampai today
+function isTaskActiveOnDay(task, dayStr, today) {
+  if (!task || task.isDeleted === true) return false;
+  if (!task.date) return false;
+
+  if (task.isProject) {
+    const start = task.date;
+    const end = task.dueDate || task.date;
+    if (dayStr < start || dayStr > end) return false;
+    // Done sebelum/pada dayStr? Tampil hanya sampai completedAt
+    if (task.status === 'done' && task.completedAt) {
+      const completedDay = tsToLocalDateStr(task.completedAt);
+      if (completedDay && dayStr > completedDay) return false;
+    }
+    if (task.notCompleted === true && task.notCompletedAt) {
+      const markedDay = tsToLocalDateStr(task.notCompletedAt);
+      if (markedDay && dayStr > markedDay) return false;
+    }
+    return true;
+  }
+
+  // Non-project
+  if (dayStr < task.date) return false;
+  if (task.status === 'done' && task.completedAt) {
+    const completedDay = tsToLocalDateStr(task.completedAt);
+    if (completedDay && dayStr > completedDay) return false;
+    return true;
+  }
+  if (task.notCompleted === true && task.notCompletedAt) {
+    const markedDay = tsToLocalDateStr(task.notCompletedAt);
+    if (markedDay && dayStr > markedDay) return false;
+    return true;
+  }
+  // Pending (belum done, belum notCompleted): aktif dari task.date sampai today
+  if (dayStr > today) return false;
+  return true;
+}
+
+// v2.35: Cek apakah task punya activity event di hari tertentu (untuk Case 4 — deletion/restore history)
+function taskHasEventOnDay(task, dayStr) {
+  const acts = task.activity || [];
+  return acts.some(a => {
+    if (!a || !a.at) return false;
+    const ad = a.at.slice(0, 10);
+    return ad === dayStr && (
+      a.type === 'marked_not_completed' ||
+      a.type === 'restored_from_not_completed' ||
+      a.type === 'task_deleted'
+    );
+  });
+}
+
 function getCalendarRecapTasks() {
   const rf = STATE.recapFilters;
   let tasks = STATE.tasks.filter(t =>
@@ -5340,6 +5683,22 @@ function renderRecapTable() {
     const projectRange = t.isProject
       ? `<div style="font-size:10px;color:#7c3aed;font-weight:600;margin-top:2px">📌 Proyek${t.dueDate && t.dueDate !== t.date ? ` (s/d ${t.dueDate.slice(5)})` : ''}</div>`
       : '';
+    // v2.35: status per-day kalau ada di filter single-day mode
+    const isSingleDay = rf.from && rf.to && rf.from === rf.to;
+    const displayStatus = (isSingleDay && t._derivedStatus) ? t._derivedStatus : (t.status || 'todo');
+    const statusLabel = displayStatus === 'notCompleted' ? 'TIDAK SELESAI'
+      : displayStatus === 'deleted' ? 'DIHAPUS'
+      : displayStatus.toUpperCase();
+    const statusClass = displayStatus === 'notCompleted' ? 'todo'
+      : displayStatus === 'deleted' ? 'todo'
+      : displayStatus;
+    const statusBg = displayStatus === 'notCompleted' ? 'background:#fee2e2;color:#991b1b'
+      : displayStatus === 'deleted' ? 'background:#fef3c7;color:#92400e'
+      : '';
+    const isCurrDiff = isSingleDay && t._derivedStatus && t._derivedStatus !== (t.status || 'todo');
+    const statusHint = isCurrDiff
+      ? `<div style="font-size:9.5px;color:var(--text-muted);margin-top:2px">sekarang: ${escapeHtml((t.status || 'todo').toUpperCase())}</div>`
+      : '';
     return `
       <tr data-recap-task="${t.id}">
         <td class="cell-date">${t.date || '—'}${projectRange}${timeRange}</td>
@@ -5350,7 +5709,7 @@ function renderRecapTable() {
             ${avatarHtml(t.assigneeName || '?')} ${escapeHtml(t.assigneeName || '?')}
           </span>
         </td>
-        <td><span class="status-pill ${t.status || 'todo'}">${(t.status || 'todo').toUpperCase()}</span></td>
+        <td><span class="status-pill ${statusClass}" style="${statusBg}">${statusLabel}</span>${statusHint}</td>
         <td>
           <span class="mini-progress"><span class="mini-progress-fill" style="width:${progress}%;background:${progress === 100 ? 'var(--success)' : (progress > 0 ? 'var(--warning)' : 'var(--text-light)')}"></span></span>
           <span style="font-size:12px;font-variant-numeric:tabular-nums">${progress}%</span>
@@ -6067,6 +6426,17 @@ function renderNotDoneList() {
       if (!t) return;
       if (!confirm(`Kembalikan "${t.title}" ke kanban?\n\nStatus balik ke TODO, alasan tidak-selesai dihapus.`)) return;
       try {
+        const meNow = STATE.currentMember;
+        // v2.35: tambah activity log entry
+        const newAct = {
+          id: uid(),
+          type: 'restored_from_not_completed',
+          byId: meNow.id, byName: meNow.name,
+          at: new Date().toISOString(),
+          to: 'todo',
+          prevReason: t.kendala || '',
+        };
+        const activity = [...(t.activity || []), newAct];
         await updateDoc(doc(STATE.db, 'tasks', taskId), {
           notCompleted: false,
           kendala: null,
@@ -6074,6 +6444,7 @@ function renderNotDoneList() {
           notCompletedBy: null,
           status: 'todo',
           progress: 0,
+          activity,
           updatedAt: serverTimestamp(),
         });
         toast('Task dikembalikan ke kanban', 'success');
@@ -6083,7 +6454,8 @@ function renderNotDoneList() {
     });
   });
 
-  // v2.25: Delete permanent — admin only
+  // v2.25-v2.35: Delete permanent — admin only. v2.35: SEMUA delete jadi soft-delete + activity log
+  // biar history visible di kalender (Case 4 user spec).
   root.querySelectorAll('[data-nd-delete]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -6093,20 +6465,26 @@ function renderNotDoneList() {
       if (!t) return;
       if (!confirm(`HAPUS PERMANEN task "${t.title}"?\n\nIni tidak bisa di-undo. Lebih baik pilih "Kembalikan ke Kanban" kalau masih perlu.`)) return;
       try {
-        if (t.fromTemplateId) {
-          // v2.30: Soft-delete + clear flag notCompleted biar gak nyangkut di badge sidebar
-          // (task isDeleted=true tetap di Firestore supaya template gak re-generate, tapi notCompleted di-clear)
-          await updateDoc(doc(STATE.db, 'tasks', taskId), {
-            isDeleted: true,
-            notCompleted: false,
-            kendala: null,
-            notCompletedAt: null,
-            notCompletedBy: null,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          await deleteDoc(doc(STATE.db, 'tasks', taskId));
-        }
+        const meNow = STATE.currentMember;
+        // v2.35: activity log entry
+        const newAct = {
+          id: uid(),
+          type: 'task_deleted',
+          byId: meNow.id, byName: meNow.name,
+          at: new Date().toISOString(),
+          reason: t.kendala || '(no reason)',
+        };
+        const activity = [...(t.activity || []), newAct];
+        // Soft-delete uniformly biar history terjaga di kalender
+        await updateDoc(doc(STATE.db, 'tasks', taskId), {
+          isDeleted: true,
+          notCompleted: false,
+          kendala: null,
+          notCompletedAt: null,
+          notCompletedBy: null,
+          activity,
+          updatedAt: serverTimestamp(),
+        });
         toast('Task dihapus permanen', 'success');
       } catch (err) {
         toast('Gagal hapus: ' + err.message, 'error');
@@ -6444,6 +6822,9 @@ function renderMain() {
               return n > 0 ? `<span class="sidebar-nav-badge" style="background:#dc2626">${n > 99 ? '99+' : n}</span>` : '';
             })()}
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'kalkerja' ? 'active' : ''}" data-nav="kalkerja">
+            <span class="sidebar-nav-icon">📋</span>Kalender Kerja
+          </button>
           <div class="sidebar-nav-section">Konfigurasi</div>
           <button class="sidebar-nav-item" data-nav="labels">
             <span class="sidebar-nav-icon">🏷️</span>Labels
@@ -6454,9 +6835,6 @@ function renderMain() {
           <div class="sidebar-nav-section">Tools</div>
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
-          </button>
-          <button class="sidebar-nav-item ${STATE.currentView === 'kalkerja' ? 'active' : ''}" data-nav="kalkerja">
-            <span class="sidebar-nav-icon">📋</span>Kalender Kerja
           </button>
           <button class="sidebar-nav-item" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
@@ -7674,12 +8052,16 @@ function renderActivitySection(task) {
       case 'assignee_changed': text = `pindah pelaksana dari <strong>${escapeHtml(a.from || '?')}</strong> ke <strong>${escapeHtml(a.to || '?')}</strong>`; break;
       case 'completed': text = 'tandai selesai'; break;
       case 'marked_not_completed': text = `tandai <strong>tidak selesai</strong> — alasan: <em>${escapeHtml((a.reason || '').slice(0, 100))}</em>`; break;
+      case 'restored_from_not_completed': text = `<strong>kembalikan task ke kanban</strong> (tidak setuju hapus / cancel mark not selesai)`; break;
+      case 'task_deleted': text = `<strong>hapus task permanen</strong>${a.reason ? ` — sisa alasan: <em>${escapeHtml((a.reason || '').slice(0, 100))}</em>` : ''}`; break;
       default: text = a.type;
     }
     const icon = a.type === 'progress_changed' ? '📊'
       : a.type === 'status_changed' ? '🔄'
       : a.type === 'assignee_changed' ? '👤'
       : a.type === 'marked_not_completed' ? '🚫'
+      : a.type === 'restored_from_not_completed' ? '↺'
+      : a.type === 'task_deleted' ? '🗑️'
       : '✨';
     return `
       <div class="activity-item">
