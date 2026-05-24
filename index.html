@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.37 — ApotekKu</title>
+<title>Team Tracker v2.38 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4711,9 +4711,6 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     return isTaskActiveOnDay(t, dateStr, today);
   });
 
-  // v2.37: cek hari libur (weekend atau tanggal merah custom)
-  const isLibur = kalKerjaIsLiburDay(dateStr);
-
   // Separate timed vs untimed
   const timed = [];
   const untimed = [];
@@ -4727,8 +4724,7 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     }
   });
 
-  // Place timed tasks (spread ke semua slot overlap) — berlaku DI HARI LIBUR juga
-  // (user mau: kalau hari libur ada task, jam-nya disesuaikan dengan real)
+  // Place timed tasks (spread ke semua slot overlap)
   timed.sort((a, b) => a.start.localeCompare(b.start));
   timed.forEach(({ task, start, end }) => {
     KALKERJA_TIME_SLOTS.forEach(slot => {
@@ -4739,24 +4735,23 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     });
   });
 
-  // v2.37: Untimed tasks AUTO-PACK HANYA di hari kerja (bukan hari libur).
-  // Hari libur → untimed tasks SKIP (jangan paksa fill slot — user bisa explicit set jam kalau emang kerja).
-  if (!isLibur) {
-    let untimedIdx = 0;
-    for (const slot of KALKERJA_TIME_SLOTS) {
-      if (slot.lunch) continue;
-      if (untimedIdx >= untimed.length) break;
-      if (result[slot.label].length === 0) {
-        result[slot.label].push(untimed[untimedIdx]);
-        untimedIdx++;
-      }
-    }
-    // Sisa untimed → tumpuk di slot terakhir
-    while (untimedIdx < untimed.length) {
-      const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
-      result[lastSlot.label].push(untimed[untimedIdx]);
+  // v2.38: Untimed tasks SELALU di-auto-pack (termasuk hari libur).
+  // User minta konsisten dengan Rekap — kalau task proses/done di rekap tanggal X,
+  // mereka harus muncul di Kalender Kerja tanggal X juga (walaupun Sabtu/Minggu).
+  // Slot kosong di hari libur tetap tampil "Libur Sabtu/Minggu" (handled di kalKerjaCellContent).
+  let untimedIdx = 0;
+  for (const slot of KALKERJA_TIME_SLOTS) {
+    if (slot.lunch) continue;
+    if (untimedIdx >= untimed.length) break;
+    if (result[slot.label].length === 0) {
+      result[slot.label].push(untimed[untimedIdx]);
       untimedIdx++;
     }
+  }
+  while (untimedIdx < untimed.length) {
+    const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
+    result[lastSlot.label].push(untimed[untimedIdx]);
+    untimedIdx++;
   }
 
   kalKerjaCacheBox.map.set(cacheKey, result);
