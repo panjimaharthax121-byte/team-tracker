@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.39 — ApotekKu</title>
+<title>Team Tracker v2.40 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4750,6 +4750,43 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     return isTaskActiveOnDay(t, dateStr, today);
   });
 
+  // v2.40: VIRTUAL FORECAST dari template untuk hari di FUTURE (today+).
+  // Goal: user bisa lihat plan task bulan depan yang akan ter-generate dari template.
+  // Logic: untuk hari ≥ today, kalau tidak ada task real fromTemplateId di hari itu,
+  // generate virtual task dari template yang match daysOfWeek + assigneeId.
+  if (dateStr >= today) {
+    const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay(); // local day-of-week
+    const realTemplateIds = new Set(tasks.filter(t => t.fromTemplateId).map(t => t.fromTemplateId));
+    (STATE.templates || []).forEach(tpl => {
+      if (tpl.isDeleted === true) return;
+      if (tpl.assigneeId !== memberId) return;
+      // Cek daysOfWeek match
+      const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
+        ? tpl.daysOfWeek.map(Number)
+        : [0,1,2,3,4,5,6]; // backward compat: kalau gak ada, every day
+      if (!dows.includes(dayOfWeek)) return;
+      // Skip kalau task real sudah ada (gak dobel)
+      if (realTemplateIds.has(tpl.id)) return;
+      // Generate virtual task untuk preview
+      tasks.push({
+        id: `virtual-${tpl.id}-${dateStr}`,
+        title: tpl.title,
+        description: tpl.description || '',
+        assigneeId: tpl.assigneeId,
+        assigneeName: tpl.assigneeName || '',
+        category: tpl.category,
+        labelIds: tpl.labelIds || [],
+        date: dateStr,
+        startTime: tpl.startTime || null,
+        endTime: tpl.endTime || null,
+        status: 'todo',
+        fromTemplateId: tpl.id,
+        fromTemplateName: tpl.title,
+        _isVirtualForecast: true, // mark untuk visual styling
+      });
+    });
+  }
+
   // v2.39: Pisah tasks ke timed/untimed dengan PRIORITAS:
   //   1. timeLog (data real auto-tracking) — paling akurat
   //   2. startTime/endTime (jam manual yang user set di task)
@@ -4820,8 +4857,11 @@ function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
   const schedule = kalKerjaScheduleDay(memberId, year, month, day);
   const tasksAtSlot = schedule[slotLabel] || [];
   if (tasksAtSlot.length > 0) {
-    // Task ada di slot ini → tampilkan (overrides default "Libur" untuk weekend/tanggal merah)
-    return tasksAtSlot.map(t => t.title || '').join(' + ');
+    // v2.40: virtual task (forecast dari template untuk future) → prefix "📅 " biar user paham itu plan, bukan real
+    return tasksAtSlot.map(t => {
+      const title = t.title || '';
+      return t._isVirtualForecast ? `📅 ${title}` : title;
+    }).join(' + ');
   }
   // v2.37: kalau slot kosong DAN hari libur → tampilkan label libur
   const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
@@ -4872,7 +4912,7 @@ function renderKalenderKerjaPageHtml() {
       </div>
       <div class="filter-divider"></div>
       <div style="font-size:11px;color:var(--text-muted);flex:1">
-        💡 Klik cell untuk edit manual (override auto-fill). MAKAN SIANG locked.
+        💡 Klik cell untuk edit manual (override). Cell <span style="background:#eff6ff;color:#1e40af;font-style:italic;padding:1px 6px;border-radius:3px">📅 italic biru</span> = forecast dari template (future). MAKAN SIANG locked.
       </div>
     </div>
 
@@ -5120,10 +5160,12 @@ function renderKalenderKerjaGrid() {
         const overrideKey = `${s.year}-${String(s.month).padStart(2,'0')}-${m.id}-${String(d).padStart(2,'0')}-${slot.label}`;
         const hasOverride = STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined;
         const isLiburContent = content && (content === 'Libur' || content.toLowerCase().startsWith('libur'));
+        const isForecastContent = content && content.startsWith('📅 '); // v2.40: virtual task dari template forecast
         let cellBg = '';
         if (isLunch) cellBg = 'background:#fef3c7;font-weight:600;text-align:center;color:#92400e';
         else if (isCustomHoliday) cellBg = 'background:#fecaca;color:#991b1b;font-style:italic;text-align:center;font-weight:600'; // tanggal merah custom = bg merah
         else if (isLiburContent) cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
+        else if (isForecastContent) cellBg = 'background:#eff6ff;color:#1e40af;font-style:italic;opacity:0.85'; // forecast = biru muda + italic
         else if (isWeekend) cellBg = 'background:#fef2f2';
         else if (hasOverride) cellBg = 'background:#dbeafe;border-left:3px solid #2563eb';
         const editable = !isLunch ? `contenteditable="true" data-kk-edit="${overrideKey}"` : '';
