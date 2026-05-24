@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.42 — ApotekKu</title>
+<title>Team Tracker v2.44 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4880,22 +4880,40 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     });
   });
 
-  // v2.39: Untimed tasks auto-pack ke slot kosong, mulai dari 08-09 (SKIP slot 06-08).
-  // Slot 06-08 hanya ke-isi kalau ada task yg REAL dikerjakan jam segitu (lewat timeLog atau startTime manual).
-  let untimedIdx = 0;
-  for (const slot of KALKERJA_TIME_SLOTS) {
-    if (slot.lunch) continue;
-    if (slot.label === '06.00-08.00') continue; // skip slot pagi sangat awal
-    if (untimedIdx >= untimed.length) break;
-    if (result[slot.label].length === 0) {
-      result[slot.label].push(untimed[untimedIdx]);
-      untimedIdx++;
+  // v2.43: Untimed tasks fill SEMUA working slots (08-09 sampai 16-17, skip 06-08 & lunch)
+  //         supaya hari kerja gak bolong-bolong.
+  //   - Hari kerja: ROUND-ROBIN — kalau cuma 1 untimed task, dia mengisi 8 slot semua (full).
+  //     Kalau ada N untimed tasks, distribute bergantian.
+  //   - Hari libur: 1 task per slot kosong (gak round-robin). Sisa slot tetap "Libur".
+  //     User explicit set jam timed kalau mau task tampil di hari libur jam spesifik.
+  const isLibur = kalKerjaIsLiburDay(dateStr);
+  const workingSlots = KALKERJA_TIME_SLOTS.filter(s => !s.lunch && s.label !== '06.00-08.00');
+  if (untimed.length > 0) {
+    if (!isLibur) {
+      // Hari kerja: round-robin fill SEMUA working slot kosong
+      let robinIdx = 0;
+      workingSlots.forEach(slot => {
+        if (result[slot.label].length === 0) {
+          result[slot.label].push(untimed[robinIdx % untimed.length]);
+          robinIdx++;
+        }
+      });
+    } else {
+      // Hari libur: 1 task per slot kosong (mulai 08-09), sisa task tumpuk slot terakhir
+      let untimedIdx = 0;
+      for (const slot of workingSlots) {
+        if (untimedIdx >= untimed.length) break;
+        if (result[slot.label].length === 0) {
+          result[slot.label].push(untimed[untimedIdx]);
+          untimedIdx++;
+        }
+      }
+      while (untimedIdx < untimed.length) {
+        const lastSlot = workingSlots[workingSlots.length - 1];
+        result[lastSlot.label].push(untimed[untimedIdx]);
+        untimedIdx++;
+      }
     }
-  }
-  while (untimedIdx < untimed.length) {
-    const lastSlot = KALKERJA_TIME_SLOTS[KALKERJA_TIME_SLOTS.length - 1];
-    result[lastSlot.label].push(untimed[untimedIdx]);
-    untimedIdx++;
   }
 
   kalKerjaCacheBox.map.set(cacheKey, result);
@@ -8755,6 +8773,11 @@ function renderPreviewModal() {
     `<option value="${m.id}" ${ps.memberFilter === m.id ? 'selected' : ''}>${escapeHtml(m.name)}${m.id === me.id ? ' (saya)' : ''}</option>`).join('');
 
   const tasks = previewCollectTasks(ps.date, ps.memberFilter);
+  // v2.44: Cache virtual tasks (template forecast) by virtual.id supaya bringTaskToToday bisa lookup data lengkap (item title, defaultAssigneeId, dll).
+  STATE._previewVirtuals = {};
+  tasks.forEach(t => {
+    if (t._isVirtualForecast) STATE._previewVirtuals[t.id] = t;
+  });
   const dt = new Date(ps.date + 'T12:00:00');
   const dayNames = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
   const monthsId = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -8797,7 +8820,7 @@ function renderPreviewModal() {
               <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
                 ${isCloneableDisabled
                   ? `<span style="font-size:10.5px;color:var(--text-muted);font-style:italic">${isToday ? '(sudah hari ini)' : '(tanggal lampau)'}</span>`
-                  : `<button class="btn btn-success btn-sm" data-preview-bring="${t._source === 'template' ? `tpl:${t.fromTemplateId}` : `real:${t.id}`}" data-preview-date="${ps.date}">⚡ Kerjakan Hari Ini</button>`}
+                  : `<button class="btn btn-success btn-sm" data-preview-bring="${t._source === 'template' ? `virtual:${t.id}` : `real:${t.id}`}" data-preview-date="${ps.date}">⚡ Kerjakan Hari Ini</button>`}
               </div>
             </div>
           </div>
@@ -8881,7 +8904,8 @@ function renderPreviewModal() {
   });
 }
 
-// v2.41: Clone task ke hari ini. Source: 'real:taskId' atau 'tpl:templateId'
+// v2.41-v2.44: Clone task ke hari ini.
+// Source: 'real:taskId' (task asli di STATE.tasks) atau 'virtual:virtualId' (virtual forecast dari template)
 async function bringTaskToToday(sourceRef, sourceDate) {
   const me = STATE.currentMember;
   if (!me) return;
@@ -8891,25 +8915,29 @@ async function bringTaskToToday(sourceRef, sourceDate) {
   // Resolve source data
   let sourceData;
   let isFromTemplate = false;
+  let templateId = null;
   if (type === 'real') {
     const task = STATE.tasks.find(t => t.id === id);
     if (!task) { toast('Task tidak ketemu', 'error'); return; }
     sourceData = task;
-    isFromTemplate = !!task.fromTemplateId; // kalau task real dari template, treat as template
-  } else if (type === 'tpl') {
-    const tpl = (STATE.templates || []).find(t => t.id === id);
-    if (!tpl) { toast('Template tidak ketemu', 'error'); return; }
-    sourceData = tpl;
+    isFromTemplate = !!task.fromTemplateId;
+    templateId = task.fromTemplateId || null;
+  } else if (type === 'virtual') {
+    // v2.44: virtual task dari preview — data lengkap sudah di STATE._previewVirtuals (built di renderPreviewModal)
+    const v = STATE._previewVirtuals && STATE._previewVirtuals[id];
+    if (!v) { toast('Forecast template tidak ketemu, refresh dulu', 'error'); return; }
+    sourceData = v;
     isFromTemplate = true;
+    templateId = v.fromTemplateId;
   } else {
     return;
   }
 
   // Anti-duplikat: kalau fromTemplate, cek apakah task real fromTemplateId+today udah ada
-  const templateIdToCheck = type === 'tpl' ? id : sourceData.fromTemplateId;
-  if (templateIdToCheck) {
+  if (templateId) {
     const exists = STATE.tasks.find(t =>
-      t.fromTemplateId === templateIdToCheck && t.date === today && t.isDeleted !== true);
+      t.fromTemplateId === templateId && t.date === today && t.isDeleted !== true
+      && t.title === sourceData.title); // v2.44: match title juga (1 template bisa multi item)
     if (exists) {
       toast(`Task "${exists.title}" dari template ini sudah ada hari ini`, 'info');
       closeModal();
@@ -8918,19 +8946,21 @@ async function bringTaskToToday(sourceRef, sourceDate) {
   }
 
   const sourceDateLabel = sourceDate || sourceData.date || '?';
-  const confirmMsg = type === 'tpl'
-    ? `Bawa task "${sourceData.title}" ke hari ini (${today})?\n\nTask baru akan dibuat dari template "${sourceData.title}". Template tetap utuh dan akan tetap auto-generate task di tanggal asalnya.`
-    : `Bawa task "${sourceData.title}" ke hari ini (${today})?\n\nTask asli tanggal ${sourceDateLabel} TETAP UTUH. Task baru tanggal hari ini akan dibuat (status TODO, progress 0%).`;
+  const titleLabel = sourceData.title || sourceData.fromTemplateName || 'Tugas';
+  const tplName = sourceData.fromTemplateName || titleLabel;
+  const confirmMsg = type === 'virtual'
+    ? `Bawa task "${titleLabel}" ke hari ini (${today})?\n\nTask baru akan dibuat dari template "${tplName}".\nTemplate akan diklaim untuk tanggal ${sourceDateLabel} — gak generate lagi di tanggal itu (anti-double).`
+    : `Bawa task "${titleLabel}" ke hari ini (${today})?\n\nTask asli tanggal ${sourceDateLabel} TETAP UTUH. Task baru tanggal hari ini akan dibuat (status TODO, progress 0%).`;
   if (!confirm(confirmMsg)) return;
 
   // Build clone
   const clone = {
-    title: sourceData.title || '',
+    title: titleLabel,
     description: sourceData.description || '',
-    assigneeId: sourceData.assigneeId,
-    assigneeName: sourceData.assigneeName || '',
-    category: sourceData.category || null,
-    labelIds: sourceData.labelIds || [],
+    assigneeId: sourceData.assigneeId || me.id,
+    assigneeName: sourceData.assigneeName || me.name,
+    category: sourceData.category || 'b2c',
+    labelIds: Array.isArray(sourceData.labelIds) ? sourceData.labelIds : [],
     isShared: sourceData.isShared === true,
     isProject: false, // v2.41: clone selalu jadi task non-project (cleaner, original project tetap span tanggalnya)
     date: today,
@@ -8941,13 +8971,13 @@ async function bringTaskToToday(sourceRef, sourceDate) {
     progress: 0,
     target: sourceData.target || 0,
     progressCount: 0,
-    checklists: (sourceData.checklists || []).map(c => ({ ...c, done: false })), // reset checklist done
+    checklists: (sourceData.checklists || []).map(c => ({ ...c, done: false })),
     comments: [],
     boardId: STATE.currentBoardId,
-    fromTemplateId: isFromTemplate ? (templateIdToCheck || sourceData.id) : null,
-    fromTemplateName: isFromTemplate ? sourceData.title : null,
-    fromPreviewOf: type === 'real' ? sourceData.id : null, // audit reference
-    fromPreviewDate: type === 'real' ? sourceDateLabel : null,
+    fromTemplateId: isFromTemplate ? templateId : null,
+    fromTemplateName: isFromTemplate ? (sourceData.fromTemplateName || tplName) : null,
+    fromPreviewOf: type === 'real' ? sourceData.id : null,
+    fromPreviewDate: sourceDateLabel,
     createdById: me.id,
     createdByName: me.name,
     createdAt: serverTimestamp(),
@@ -8960,26 +8990,26 @@ async function bringTaskToToday(sourceRef, sourceDate) {
       at: new Date().toISOString(),
       note: type === 'real'
         ? `cloned dari task tanggal ${sourceDateLabel} via Preview Tugas Mendatang`
-        : `materialized dari template "${sourceData.title}" via Preview Tugas Mendatang`,
+        : `materialized dari template "${tplName}" via Preview Tugas Mendatang (claim ${sourceDateLabel})`,
     }],
   };
 
   try {
     await addDoc(collection(STATE.db, 'tasks'), clone);
-    // v2.42: Kalau source = template, "claim" source date supaya template gak auto-generate task lagi di tanggal itu.
-    // Mekanisme anti-double: misal user clone task forecast Senin ke hari Sabtu, Senin nanti template skip generate.
-    if (type === 'tpl') {
+    // v2.42-v2.44: Kalau source = template (virtual), "claim" source date supaya template gak auto-generate task lagi di tanggal itu.
+    // Mekanisme anti-double: user clone task forecast Senin ke Sabtu → Senin nanti template SKIP generate.
+    if (isFromTemplate && templateId) {
       try {
-        const tplRef = doc(STATE.db, `boards/${STATE.currentBoardId}/templates`, id);
+        const tplRef = doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', templateId);
         await updateDoc(tplRef, {
           claimedDates: arrayUnion(sourceDate),
           updatedAt: serverTimestamp(),
         });
       } catch (e) {
-        console.warn('Gagal claim tanggal template (non-critical)', e);
+        console.warn('Gagal claim tanggal template (non-critical, anti-dup tetap jalan via fromTemplateId+date check):', e);
       }
     }
-    toast(`✅ Task "${clone.title}" dibuat hari ini${type === 'tpl' ? ' (template di-claim untuk ' + sourceDate + ')' : ''}. Cek kanban.`, 'success');
+    toast(`✅ Task "${clone.title}" dibuat hari ini${isFromTemplate ? ' · template di-claim untuk ' + sourceDate : ''}`, 'success');
     closeModal();
   } catch (err) {
     toast('Gagal: ' + err.message, 'error');
