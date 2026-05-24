@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.41 — ApotekKu</title>
+<title>Team Tracker v2.42 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -3990,6 +3990,8 @@ async function ensureRecurringTasksForToday() {
     if (freq === 'manual') continue;
     if (tpl.active === false) continue;
     if (!Array.isArray(tpl.items) || tpl.items.length === 0) continue;
+    // v2.42: Skip kalau hari ini ada di claimedDates (sudah di-claim via Preview "Kerjakan Hari Ini")
+    if (Array.isArray(tpl.claimedDates) && tpl.claimedDates.includes(today)) continue;
 
     let shouldGenerate = false;
     if (freq === 'daily') {
@@ -4658,6 +4660,91 @@ function kalKerjaState() {
 }
 
 // v2.34: helper jam (HH:MM arithmetic)
+// v2.42: Helper terpadu — generate virtual forecast tasks dari templates active untuk tanggal tertentu.
+// Konsisten dipakai di Preview Tugas Mendatang & Kalender Kerja forecast.
+// Logic mirror ensureRecurringTasksForToday: cek frequency, daysOfWeek/dayOfWeek/dayOfMonth, items[].
+// Skip kalau task real fromTemplateId+items udah ada di tanggal itu (anti-duplikat).
+// Skip kalau tanggal target ada di tpl.claimedDates (sudah di-claim via Preview "Kerjakan Hari Ini").
+function templateForecastForDate(targetDate, opts) {
+  opts = opts || {};
+  const memberFilter = opts.memberFilter || null; // null = semua
+  const result = [];
+  if (!Array.isArray(STATE.templates) || STATE.templates.length === 0) return result;
+
+  const dt = new Date(targetDate + 'T12:00:00');
+  if (isNaN(dt.getTime())) return result;
+  const dow = dt.getDay();       // 0=Sun..6=Sat
+  const dom = dt.getDate();
+  const lastDom = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+
+  // Collect real tasks dengan fromTemplateId untuk dedup
+  const realKeys = new Set();
+  (STATE.tasks || []).forEach(t => {
+    if (t.isDeleted === true) return;
+    if (!t.fromTemplateId) return;
+    if (t.date !== targetDate) return;
+    realKeys.add(`${t.fromTemplateId}::${t.title || ''}`);
+  });
+
+  STATE.templates.forEach(tpl => {
+    if (tpl.isDeleted === true) return;
+    if (tpl.active === false) return;
+    if (!Array.isArray(tpl.items) || tpl.items.length === 0) return;
+    // Skip kalau tanggal ini sudah di-claim via Preview "Kerjakan Hari Ini"
+    if (Array.isArray(tpl.claimedDates) && tpl.claimedDates.includes(targetDate)) return;
+
+    // Check frequency match
+    const freq = tpl.frequency || 'manual';
+    if (freq === 'manual') return; // template manual gak auto-generate
+    let shouldGenerate = false;
+    if (freq === 'daily') {
+      const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
+        ? tpl.daysOfWeek.map(Number) : [0,1,2,3,4,5,6];
+      shouldGenerate = dows.includes(dow);
+    } else if (freq === 'weekly') {
+      shouldGenerate = Number(tpl.dayOfWeek) === dow;
+    } else if (freq === 'monthly') {
+      const target = tpl.dayOfMonth === 'last' ? lastDom : Number(tpl.dayOfMonth);
+      shouldGenerate = target === dom;
+    }
+    if (!shouldGenerate) return;
+
+    const assigneeId = tpl.defaultAssigneeId || '';
+    if (memberFilter && assigneeId !== memberFilter && tpl.defaultIsShared !== true) return;
+    const assignee = STATE.members.find(m => m.id === assigneeId);
+    const assigneeName = assignee?.name || '?';
+    const category = tpl.defaultCategoryId || 'b2c';
+    const isShared = tpl.defaultIsShared === true;
+
+    // Loop items — 1 template bisa generate multiple tasks
+    tpl.items.forEach((item, idx) => {
+      const itemTitle = item.title || tpl.name || 'Tugas';
+      const dedupKey = `${tpl.id}::${itemTitle}`;
+      if (realKeys.has(dedupKey)) return; // task real udah ada untuk item ini
+      result.push({
+        id: `virtual-${tpl.id}-${item.id || idx}-${targetDate}`,
+        title: itemTitle,
+        description: item.description || '',
+        assigneeId,
+        assigneeName,
+        category,
+        labelIds: [],
+        date: targetDate,
+        startTime: null,  // template gak punya jam default
+        endTime: null,
+        status: 'todo',
+        isShared,
+        isProject: false,
+        fromTemplateId: tpl.id,
+        fromTemplateName: tpl.name,
+        _templateItemId: item.id || `idx${idx}`,
+        _isVirtualForecast: true,
+      });
+    });
+  });
+  return result;
+}
+
 // v2.39: convert Firestore timestamp / number / Date → "HH:MM" (local time)
 function tsToLocalHHMM(ts) {
   if (!ts) return null;
@@ -4751,41 +4838,11 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     return isTaskActiveOnDay(t, dateStr, today);
   });
 
-  // v2.40: VIRTUAL FORECAST dari template untuk hari di FUTURE (today+).
-  // Goal: user bisa lihat plan task bulan depan yang akan ter-generate dari template.
-  // Logic: untuk hari ≥ today, kalau tidak ada task real fromTemplateId di hari itu,
-  // generate virtual task dari template yang match daysOfWeek + assigneeId.
+  // v2.42: VIRTUAL FORECAST pakai helper terpadu (schema template bener: tpl.name + items[] + frequency)
+  // Hanya untuk hari ≥ today (jangan forecast ke masa lalu).
   if (dateStr >= today) {
-    const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay(); // local day-of-week
-    const realTemplateIds = new Set(tasks.filter(t => t.fromTemplateId).map(t => t.fromTemplateId));
-    (STATE.templates || []).forEach(tpl => {
-      if (tpl.isDeleted === true) return;
-      if (tpl.assigneeId !== memberId) return;
-      // Cek daysOfWeek match
-      const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
-        ? tpl.daysOfWeek.map(Number)
-        : [0,1,2,3,4,5,6]; // backward compat: kalau gak ada, every day
-      if (!dows.includes(dayOfWeek)) return;
-      // Skip kalau task real sudah ada (gak dobel)
-      if (realTemplateIds.has(tpl.id)) return;
-      // Generate virtual task untuk preview
-      tasks.push({
-        id: `virtual-${tpl.id}-${dateStr}`,
-        title: tpl.title,
-        description: tpl.description || '',
-        assigneeId: tpl.assigneeId,
-        assigneeName: tpl.assigneeName || '',
-        category: tpl.category,
-        labelIds: tpl.labelIds || [],
-        date: dateStr,
-        startTime: tpl.startTime || null,
-        endTime: tpl.endTime || null,
-        status: 'todo',
-        fromTemplateId: tpl.id,
-        fromTemplateName: tpl.title,
-        _isVirtualForecast: true, // mark untuk visual styling
-      });
-    });
+    const forecast = templateForecastForDate(dateStr, { memberFilter: memberId });
+    forecast.forEach(vt => tasks.push(vt));
   }
 
   // v2.39: Pisah tasks ke timed/untimed dengan PRIORITAS:
@@ -8655,34 +8712,10 @@ function previewCollectTasks(targetDate, memberFilter) {
     }
     if (isRelevant) tasks.push({ ...t, _source: 'real' });
   });
-  // 2. Virtual forecast dari template (kalau target ≥ today)
+  // v2.42: 2. Virtual forecast dari template — pakai helper terpadu (fix bug schema)
   if (targetDate >= today) {
-    const dow = new Date(targetDate + 'T12:00:00').getDay();
-    const realTplIds = new Set(tasks.filter(t => t.fromTemplateId).map(t => t.fromTemplateId));
-    (STATE.templates || []).forEach(tpl => {
-      if (tpl.isDeleted === true) return;
-      if (memberFilter && tpl.assigneeId !== memberFilter) return;
-      if (realTplIds.has(tpl.id)) return; // skip kalau task real udah ada
-      const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
-        ? tpl.daysOfWeek.map(Number) : [0,1,2,3,4,5,6];
-      if (!dows.includes(dow)) return;
-      tasks.push({
-        id: `virtual-${tpl.id}-${targetDate}`,
-        title: tpl.title,
-        description: tpl.description || '',
-        assigneeId: tpl.assigneeId,
-        assigneeName: tpl.assigneeName || '',
-        category: tpl.category,
-        labelIds: tpl.labelIds || [],
-        startTime: tpl.startTime || null,
-        endTime: tpl.endTime || null,
-        date: targetDate,
-        status: 'todo',
-        fromTemplateId: tpl.id,
-        fromTemplateName: tpl.title,
-        _source: 'template',
-      });
-    });
+    const forecast = templateForecastForDate(targetDate, { memberFilter });
+    forecast.forEach(vt => tasks.push({ ...vt, _source: 'template' }));
   }
   // Sort: jam start asc, lalu kategori, lalu title
   tasks.sort((a, b) => {
@@ -8933,7 +8966,20 @@ async function bringTaskToToday(sourceRef, sourceDate) {
 
   try {
     await addDoc(collection(STATE.db, 'tasks'), clone);
-    toast(`✅ Task "${clone.title}" dibuat hari ini. Cek kanban.`, 'success');
+    // v2.42: Kalau source = template, "claim" source date supaya template gak auto-generate task lagi di tanggal itu.
+    // Mekanisme anti-double: misal user clone task forecast Senin ke hari Sabtu, Senin nanti template skip generate.
+    if (type === 'tpl') {
+      try {
+        const tplRef = doc(STATE.db, `boards/${STATE.currentBoardId}/templates`, id);
+        await updateDoc(tplRef, {
+          claimedDates: arrayUnion(sourceDate),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        console.warn('Gagal claim tanggal template (non-critical)', e);
+      }
+    }
+    toast(`✅ Task "${clone.title}" dibuat hari ini${type === 'tpl' ? ' (template di-claim untuk ' + sourceDate + ')' : ''}. Cek kanban.`, 'success');
     closeModal();
   } catch (err) {
     toast('Gagal: ' + err.message, 'error');
