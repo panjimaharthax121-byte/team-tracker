@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.40 — ApotekKu</title>
+<title>Team Tracker v2.41 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4310,7 +4310,8 @@ function renderKanbanPageHtml(allChip, memberChips, labelFilterHtml) {
         <h1 class="page-title">Kanban Board</h1>
         <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Pantau progress tugas tim — B2C · Online · Optimize Process</div>
       </div>
-      <div class="page-toolbar">
+      <div class="page-toolbar" style="display:flex;gap:8px">
+        <button class="btn btn-secondary" id="btn-preview-mendatang" title="Lihat tugas mendatang & bawa ke hari ini">🔭 Preview Tugas</button>
         <button class="btn btn-primary" id="btn-new-task">+ Tugas Baru</button>
       </div>
     </div>
@@ -7068,6 +7069,9 @@ function renderMain() {
   // Buttons only available in kanban view
   const newTaskBtn = document.getElementById('btn-new-task');
   if (newTaskBtn) newTaskBtn.addEventListener('click', () => openTaskModal());
+  // v2.41: Preview tugas mendatang
+  const previewBtn = document.getElementById('btn-preview-mendatang');
+  if (previewBtn) previewBtn.addEventListener('click', () => openPreviewMendatangModal());
 
   // Sidebar navigation
   document.querySelectorAll('[data-nav]').forEach(btn => {
@@ -8620,6 +8624,322 @@ async function updateTaskStatus(taskId, newStatus) {
 /* =============================================================
    v2.24: MARK TASK AS NOT-COMPLETED (popup kendala dari card)
    ============================================================= */
+/* =============================================================
+   v2.41: PREVIEW TUGAS MENDATANG + CLONE KE HARI INI
+   ============================================================= */
+// Collect semua task (real + virtual template forecast) untuk tanggal tertentu, member filter
+// v2.41: pakai logic LANGSUNG (gak via isTaskActiveOnDay) karena helper itu bias ke "active hingga today"
+// untuk pending task. Preview mau lihat task yg scheduled di tanggal target (apapun statusnya).
+function previewCollectTasks(targetDate, memberFilter) {
+  const today = todayStr();
+  const tasks = [];
+  (STATE.tasks || []).forEach(t => {
+    if (t.isDeleted === true || t.notCompleted === true) return;
+    if (memberFilter && t.assigneeId !== memberFilter && !(t.isShared === true)) return;
+    let isRelevant = false;
+    if (t.isProject) {
+      // Project: target di range [date, dueDate]
+      const start = t.date || '';
+      const end = t.dueDate || t.date || '';
+      if (start && targetDate >= start && targetDate <= end) {
+        // Skip kalau project sudah done sebelum target (gak ada kerjaan lagi)
+        if (t.status === 'done' && t.completedAt) {
+          const cd = tsToLocalDateStr(t.completedAt);
+          if (cd && targetDate > cd) return;
+        }
+        isRelevant = true;
+      }
+    } else {
+      // Non-project: scheduled tepat target date
+      if (t.date === targetDate) isRelevant = true;
+    }
+    if (isRelevant) tasks.push({ ...t, _source: 'real' });
+  });
+  // 2. Virtual forecast dari template (kalau target ≥ today)
+  if (targetDate >= today) {
+    const dow = new Date(targetDate + 'T12:00:00').getDay();
+    const realTplIds = new Set(tasks.filter(t => t.fromTemplateId).map(t => t.fromTemplateId));
+    (STATE.templates || []).forEach(tpl => {
+      if (tpl.isDeleted === true) return;
+      if (memberFilter && tpl.assigneeId !== memberFilter) return;
+      if (realTplIds.has(tpl.id)) return; // skip kalau task real udah ada
+      const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
+        ? tpl.daysOfWeek.map(Number) : [0,1,2,3,4,5,6];
+      if (!dows.includes(dow)) return;
+      tasks.push({
+        id: `virtual-${tpl.id}-${targetDate}`,
+        title: tpl.title,
+        description: tpl.description || '',
+        assigneeId: tpl.assigneeId,
+        assigneeName: tpl.assigneeName || '',
+        category: tpl.category,
+        labelIds: tpl.labelIds || [],
+        startTime: tpl.startTime || null,
+        endTime: tpl.endTime || null,
+        date: targetDate,
+        status: 'todo',
+        fromTemplateId: tpl.id,
+        fromTemplateName: tpl.title,
+        _source: 'template',
+      });
+    });
+  }
+  // Sort: jam start asc, lalu kategori, lalu title
+  tasks.sort((a, b) => {
+    const ta = a.startTime || '99:99';
+    const tb = b.startTime || '99:99';
+    if (ta !== tb) return ta.localeCompare(tb);
+    return (a.title || '').localeCompare(b.title || '');
+  });
+  return tasks;
+}
+
+function openPreviewMendatangModal() {
+  const me = STATE.currentMember;
+  if (!me) return;
+  // Default: besok
+  if (!STATE._previewState) {
+    const tomorrow = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    })();
+    STATE._previewState = { date: tomorrow, memberFilter: me.id }; // default cuma current member
+  }
+  const ps = STATE._previewState;
+  renderPreviewModal();
+}
+
+function renderPreviewModal() {
+  const me = STATE.currentMember;
+  const ps = STATE._previewState;
+  const today = todayStr();
+  const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+  const lusa = (() => { const d = new Date(); d.setDate(d.getDate()+2); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+  const wkAhead = (() => { const d = new Date(); d.setDate(d.getDate()+7); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+
+  const memberOpts = (STATE.members || []).map(m =>
+    `<option value="${m.id}" ${ps.memberFilter === m.id ? 'selected' : ''}>${escapeHtml(m.name)}${m.id === me.id ? ' (saya)' : ''}</option>`).join('');
+
+  const tasks = previewCollectTasks(ps.date, ps.memberFilter);
+  const dt = new Date(ps.date + 'T12:00:00');
+  const dayNames = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  const monthsId = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const dateLabel = `${dayNames[dt.getDay()]}, ${dt.getDate()} ${monthsId[dt.getMonth()]} ${dt.getFullYear()}`;
+  const isPast = ps.date < today;
+  const isToday = ps.date === today;
+
+  const taskRows = tasks.length === 0
+    ? `<div style="text-align:center;padding:30px 20px;color:var(--text-muted)">
+         <div style="font-size:36px;margin-bottom:6px">📭</div>
+         <div style="font-size:13px">Tidak ada task pada ${escapeHtml(dateLabel)}</div>
+         <div style="font-size:11px;margin-top:4px">Mungkin gak ada template aktif untuk hari itu, atau gak ada task yg di-create.</div>
+       </div>`
+    : tasks.map(t => {
+        const cat = CATEGORIES.find(c => c.id === t.category);
+        const catBadge = cat ? `<span class="category-badge" style="background:${cat.color}20;color:${cat.color}">${escapeHtml(cat.short || cat.name)}</span>` : '';
+        const timeStr = t.startTime ? `${escapeHtml(t.startTime)}${t.endTime ? ` – ${escapeHtml(t.endTime)}` : ''}` : '(tanpa jam)';
+        const sourceBadge = t._source === 'template'
+          ? `<span style="background:#eff6ff;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">📅 FORECAST</span>`
+          : (t.isProject ? `<span style="background:#f3e8ff;color:#7c3aed;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">📌 PROYEK</span>` : '');
+        const sharedBadge = t.isShared ? `<span style="background:#cffafe;color:#0e7490;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">👥 BERSAMA</span>` : '';
+        const assigneeAvatar = avatarHtml(t.assigneeName || '?');
+        const isCloneableDisabled = isPast || isToday; // gak perlu clone task hari ini / lampau
+        return `
+          <div class="preview-row" style="background:white;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+                  ${catBadge}
+                  <strong style="font-size:14px">${escapeHtml(t.title)}</strong>
+                  ${sourceBadge}${sharedBadge}
+                </div>
+                <div style="display:flex;gap:10px;font-size:11.5px;color:var(--text-muted);flex-wrap:wrap;align-items:center">
+                  <span style="display:inline-flex;align-items:center;gap:4px">${assigneeAvatar} ${escapeHtml(t.assigneeName || '?')}</span>
+                  <span>⏰ ${timeStr}</span>
+                  ${t.isProject && t.dueDate && t.dueDate !== t.date ? `<span>📅 ${escapeHtml(t.date)} → ${escapeHtml(t.dueDate)}</span>` : ''}
+                </div>
+                ${t.description ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.4">${escapeHtml(t.description.slice(0, 120))}${t.description.length > 120 ? '…' : ''}</div>` : ''}
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+                ${isCloneableDisabled
+                  ? `<span style="font-size:10.5px;color:var(--text-muted);font-style:italic">${isToday ? '(sudah hari ini)' : '(tanggal lampau)'}</span>`
+                  : `<button class="btn btn-success btn-sm" data-preview-bring="${t._source === 'template' ? `tpl:${t.fromTemplateId}` : `real:${t.id}`}" data-preview-date="${ps.date}">⚡ Kerjakan Hari Ini</button>`}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">🔭 Preview Tugas Mendatang</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:18px 20px">
+      <div style="background:#f0f9ff;border-left:3px solid #0ea5e9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#075985;line-height:1.5">
+        💡 Lihat task yang dijadwalkan tanggal lain. Kalau mau kerjain task itu <strong>hari ini</strong>, klik tombol <strong>⚡ Kerjakan Hari Ini</strong> → akan dibuat <strong>clone</strong> task baru tanggal hari ini. Task asli <strong>tetap utuh</strong> di tanggal aslinya (anti miss data).
+      </div>
+
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">Tanggal</label>
+          <input type="date" id="preview-date-input" class="input" value="${ps.date}" style="padding:6px 10px;font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">Pelaksana</label>
+          <select id="preview-member" class="select" style="padding:6px 10px;font-size:13px">
+            <option value="">Semua tim</option>
+            ${memberOpts}
+          </select>
+        </div>
+        <div style="flex:1;min-width:200px;display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+          <button class="chip ${ps.date === tomorrow ? 'active' : ''}" data-preview-quick="${tomorrow}">Besok</button>
+          <button class="chip ${ps.date === lusa ? 'active' : ''}" data-preview-quick="${lusa}">Lusa</button>
+          <button class="chip ${ps.date === wkAhead ? 'active' : ''}" data-preview-quick="${wkAhead}">+1 Minggu</button>
+        </div>
+      </div>
+
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        📅 ${escapeHtml(dateLabel)}
+        ${isPast ? `<span style="background:#fef3c7;color:#92400e;font-size:10px;padding:1px 8px;border-radius:4px;font-weight:600">LAMPAU</span>` : ''}
+        ${isToday ? `<span style="background:#dcfce7;color:#166534;font-size:10px;padding:1px 8px;border-radius:4px;font-weight:600">HARI INI</span>` : ''}
+        <span style="margin-left:auto;font-weight:400;color:var(--text-muted)">${tasks.length} task</span>
+      </div>
+
+      <div id="preview-list">
+        ${taskRows}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `;
+  showModal(html, { size: 'lg' });
+
+  // Bind handlers
+  const dateInput = document.getElementById('preview-date-input');
+  if (dateInput) dateInput.addEventListener('change', () => {
+    if (dateInput.value) {
+      STATE._previewState.date = dateInput.value;
+      closeModal();
+      renderPreviewModal();
+    }
+  });
+  const memberSel = document.getElementById('preview-member');
+  if (memberSel) memberSel.addEventListener('change', () => {
+    STATE._previewState.memberFilter = memberSel.value || null;
+    closeModal();
+    renderPreviewModal();
+  });
+  document.querySelectorAll('[data-preview-quick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      STATE._previewState.date = btn.dataset.previewQuick;
+      closeModal();
+      renderPreviewModal();
+    });
+  });
+  document.querySelectorAll('[data-preview-bring]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const raw = btn.dataset.previewBring;
+      const sourceDate = btn.dataset.previewDate;
+      await bringTaskToToday(raw, sourceDate);
+    });
+  });
+}
+
+// v2.41: Clone task ke hari ini. Source: 'real:taskId' atau 'tpl:templateId'
+async function bringTaskToToday(sourceRef, sourceDate) {
+  const me = STATE.currentMember;
+  if (!me) return;
+  const [type, id] = sourceRef.split(':');
+  const today = todayStr();
+
+  // Resolve source data
+  let sourceData;
+  let isFromTemplate = false;
+  if (type === 'real') {
+    const task = STATE.tasks.find(t => t.id === id);
+    if (!task) { toast('Task tidak ketemu', 'error'); return; }
+    sourceData = task;
+    isFromTemplate = !!task.fromTemplateId; // kalau task real dari template, treat as template
+  } else if (type === 'tpl') {
+    const tpl = (STATE.templates || []).find(t => t.id === id);
+    if (!tpl) { toast('Template tidak ketemu', 'error'); return; }
+    sourceData = tpl;
+    isFromTemplate = true;
+  } else {
+    return;
+  }
+
+  // Anti-duplikat: kalau fromTemplate, cek apakah task real fromTemplateId+today udah ada
+  const templateIdToCheck = type === 'tpl' ? id : sourceData.fromTemplateId;
+  if (templateIdToCheck) {
+    const exists = STATE.tasks.find(t =>
+      t.fromTemplateId === templateIdToCheck && t.date === today && t.isDeleted !== true);
+    if (exists) {
+      toast(`Task "${exists.title}" dari template ini sudah ada hari ini`, 'info');
+      closeModal();
+      return;
+    }
+  }
+
+  const sourceDateLabel = sourceDate || sourceData.date || '?';
+  const confirmMsg = type === 'tpl'
+    ? `Bawa task "${sourceData.title}" ke hari ini (${today})?\n\nTask baru akan dibuat dari template "${sourceData.title}". Template tetap utuh dan akan tetap auto-generate task di tanggal asalnya.`
+    : `Bawa task "${sourceData.title}" ke hari ini (${today})?\n\nTask asli tanggal ${sourceDateLabel} TETAP UTUH. Task baru tanggal hari ini akan dibuat (status TODO, progress 0%).`;
+  if (!confirm(confirmMsg)) return;
+
+  // Build clone
+  const clone = {
+    title: sourceData.title || '',
+    description: sourceData.description || '',
+    assigneeId: sourceData.assigneeId,
+    assigneeName: sourceData.assigneeName || '',
+    category: sourceData.category || null,
+    labelIds: sourceData.labelIds || [],
+    isShared: sourceData.isShared === true,
+    isProject: false, // v2.41: clone selalu jadi task non-project (cleaner, original project tetap span tanggalnya)
+    date: today,
+    dueDate: null,
+    startTime: sourceData.startTime || null,
+    endTime: sourceData.endTime || null,
+    status: 'todo',
+    progress: 0,
+    target: sourceData.target || 0,
+    progressCount: 0,
+    checklists: (sourceData.checklists || []).map(c => ({ ...c, done: false })), // reset checklist done
+    comments: [],
+    boardId: STATE.currentBoardId,
+    fromTemplateId: isFromTemplate ? (templateIdToCheck || sourceData.id) : null,
+    fromTemplateName: isFromTemplate ? sourceData.title : null,
+    fromPreviewOf: type === 'real' ? sourceData.id : null, // audit reference
+    fromPreviewDate: type === 'real' ? sourceDateLabel : null,
+    createdById: me.id,
+    createdByName: me.name,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    completedAt: null,
+    activity: [{
+      id: uid(),
+      type: 'created',
+      byId: me.id, byName: me.name,
+      at: new Date().toISOString(),
+      note: type === 'real'
+        ? `cloned dari task tanggal ${sourceDateLabel} via Preview Tugas Mendatang`
+        : `materialized dari template "${sourceData.title}" via Preview Tugas Mendatang`,
+    }],
+  };
+
+  try {
+    await addDoc(collection(STATE.db, 'tasks'), clone);
+    toast(`✅ Task "${clone.title}" dibuat hari ini. Cek kanban.`, 'success');
+    closeModal();
+  } catch (err) {
+    toast('Gagal: ' + err.message, 'error');
+  }
+}
+
 function openMarkNotDoneModal(task) {
   const me = STATE.currentMember;
   if (!me) return;
