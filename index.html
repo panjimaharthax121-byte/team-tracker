@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.44 — ApotekKu</title>
+<title>Team Tracker v2.45 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -8256,6 +8256,7 @@ function renderActivitySection(task) {
       case 'marked_not_completed': text = `tandai <strong>tidak selesai</strong> — alasan: <em>${escapeHtml((a.reason || '').slice(0, 100))}</em>`; break;
       case 'restored_from_not_completed': text = `<strong>kembalikan task ke kanban</strong> (tidak setuju hapus / cancel mark not selesai)`; break;
       case 'task_deleted': text = `<strong>hapus task permanen</strong>${a.reason ? ` — sisa alasan: <em>${escapeHtml((a.reason || '').slice(0, 100))}</em>` : ''}`; break;
+      case 'moved_via_preview': text = `<strong>pindah jadwal</strong> dari <code>${escapeHtml(a.from || '?')}</code> ke <code>${escapeHtml(a.to || '?')}</code> via Preview Tugas Mendatang`; break;
       default: text = a.type;
     }
     const icon = a.type === 'progress_changed' ? '📊'
@@ -8264,6 +8265,7 @@ function renderActivitySection(task) {
       : a.type === 'marked_not_completed' ? '🚫'
       : a.type === 'restored_from_not_completed' ? '↺'
       : a.type === 'task_deleted' ? '🗑️'
+      : a.type === 'moved_via_preview' ? '🔀'
       : '✨';
     return `
       <div class="activity-item">
@@ -8834,7 +8836,10 @@ function renderPreviewModal() {
     </div>
     <div class="modal-body" style="padding:18px 20px">
       <div style="background:#f0f9ff;border-left:3px solid #0ea5e9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#075985;line-height:1.5">
-        💡 Lihat task yang dijadwalkan tanggal lain. Kalau mau kerjain task itu <strong>hari ini</strong>, klik tombol <strong>⚡ Kerjakan Hari Ini</strong> → akan dibuat <strong>clone</strong> task baru tanggal hari ini. Task asli <strong>tetap utuh</strong> di tanggal aslinya (anti miss data).
+        💡 Lihat task yang dijadwalkan tanggal lain. Klik <strong>⚡ Kerjakan Hari Ini</strong> buat bawa task ke hari ini:
+        <br>• <strong>Task biasa</strong> → dipindah ke hari ini (asli hilang dari tanggal aslinya).
+        <br>• <strong>Task project (multi-hari)</strong> → di-clone non-project, project asli tetap span tanggalnya.
+        <br>• <strong>Template forecast</strong> 📅 → task baru dibuat + template di-claim (gak generate lagi di tanggal asal).
       </div>
 
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
@@ -8904,8 +8909,10 @@ function renderPreviewModal() {
   });
 }
 
-// v2.41-v2.44: Clone task ke hari ini.
-// Source: 'real:taskId' (task asli di STATE.tasks) atau 'virtual:virtualId' (virtual forecast dari template)
+// v2.41-v2.45: Bawa task ke hari ini. Strategi berbeda per jenis source:
+//   - Task real NON-PROJECT future → MOVE (update task.date ke today, task asli HILANG dari tanggal asalnya)
+//   - Task real PROJECT future → CLONE non-project (project asli tetap span tanggalnya, biar semantic project preserved)
+//   - Template VIRTUAL forecast → CLONE + claim sourceDate (template skip generate nanti)
 async function bringTaskToToday(sourceRef, sourceDate) {
   const me = STATE.currentMember;
   if (!me) return;
@@ -8916,14 +8923,15 @@ async function bringTaskToToday(sourceRef, sourceDate) {
   let sourceData;
   let isFromTemplate = false;
   let templateId = null;
+  let realTaskId = null;
   if (type === 'real') {
     const task = STATE.tasks.find(t => t.id === id);
     if (!task) { toast('Task tidak ketemu', 'error'); return; }
     sourceData = task;
+    realTaskId = task.id;
     isFromTemplate = !!task.fromTemplateId;
     templateId = task.fromTemplateId || null;
   } else if (type === 'virtual') {
-    // v2.44: virtual task dari preview — data lengkap sudah di STATE._previewVirtuals (built di renderPreviewModal)
     const v = STATE._previewVirtuals && STATE._previewVirtuals[id];
     if (!v) { toast('Forecast template tidak ketemu, refresh dulu', 'error'); return; }
     sourceData = v;
@@ -8933,11 +8941,48 @@ async function bringTaskToToday(sourceRef, sourceDate) {
     return;
   }
 
-  // Anti-duplikat: kalau fromTemplate, cek apakah task real fromTemplateId+today udah ada
-  if (templateId) {
+  const sourceDateLabel = sourceDate || sourceData.date || '?';
+  const titleLabel = sourceData.title || sourceData.fromTemplateName || 'Tugas';
+  const tplName = sourceData.fromTemplateName || titleLabel;
+
+  // === STRATEGI 1: TASK REAL NON-PROJECT → MOVE (update task.date ke today, asli HILANG) ===
+  if (type === 'real' && !sourceData.isProject) {
+    const confirmMsg = `Pindah task "${titleLabel}" ke hari ini (${today})?\n\n` +
+      `Task asli tanggal ${sourceDateLabel} akan DIPINDAHKAN ke hari ini.\n` +
+      `Status reset ke TODO, progress 0%.`;
+    if (!confirm(confirmMsg)) return;
+    try {
+      const newActivity = [...(sourceData.activity || []), {
+        id: uid(),
+        type: 'moved_via_preview',
+        byId: me.id, byName: me.name,
+        at: new Date().toISOString(),
+        from: sourceDateLabel,
+        to: today,
+      }];
+      await updateDoc(doc(STATE.db, 'tasks', realTaskId), {
+        date: today,
+        status: 'todo',
+        progress: 0,
+        progressCount: 0,
+        completedAt: null,
+        activity: newActivity,
+        updatedAt: serverTimestamp(),
+      });
+      toast(`✅ Task "${titleLabel}" dipindahkan dari ${sourceDateLabel} ke hari ini`, 'success');
+      closeModal();
+    } catch (err) {
+      toast('Gagal pindah: ' + err.message, 'error');
+    }
+    return;
+  }
+
+  // === STRATEGI 2 & 3: CLONE (project real atau virtual template) ===
+  // Anti-duplikat untuk template virtual: cek fromTemplateId+today+title sudah ada
+  if (type === 'virtual' && templateId) {
     const exists = STATE.tasks.find(t =>
       t.fromTemplateId === templateId && t.date === today && t.isDeleted !== true
-      && t.title === sourceData.title); // v2.44: match title juga (1 template bisa multi item)
+      && t.title === sourceData.title);
     if (exists) {
       toast(`Task "${exists.title}" dari template ini sudah ada hari ini`, 'info');
       closeModal();
@@ -8945,12 +8990,9 @@ async function bringTaskToToday(sourceRef, sourceDate) {
     }
   }
 
-  const sourceDateLabel = sourceDate || sourceData.date || '?';
-  const titleLabel = sourceData.title || sourceData.fromTemplateName || 'Tugas';
-  const tplName = sourceData.fromTemplateName || titleLabel;
   const confirmMsg = type === 'virtual'
-    ? `Bawa task "${titleLabel}" ke hari ini (${today})?\n\nTask baru akan dibuat dari template "${tplName}".\nTemplate akan diklaim untuk tanggal ${sourceDateLabel} — gak generate lagi di tanggal itu (anti-double).`
-    : `Bawa task "${titleLabel}" ke hari ini (${today})?\n\nTask asli tanggal ${sourceDateLabel} TETAP UTUH. Task baru tanggal hari ini akan dibuat (status TODO, progress 0%).`;
+    ? `Bawa task "${titleLabel}" ke hari ini (${today})?\n\nTask baru dibuat dari template "${tplName}".\nTemplate diklaim untuk tanggal ${sourceDateLabel} — TIDAK generate lagi di tanggal itu (anti-double).`
+    : `Bawa task "${titleLabel}" (proyek ${sourceDateLabel}) ke hari ini (${today})?\n\nProject asli TETAP berjalan di range tanggalnya.\nTask BARU non-project tanggal hari ini akan dibuat.`;
   if (!confirm(confirmMsg)) return;
 
   // Build clone
@@ -8962,7 +9004,7 @@ async function bringTaskToToday(sourceRef, sourceDate) {
     category: sourceData.category || 'b2c',
     labelIds: Array.isArray(sourceData.labelIds) ? sourceData.labelIds : [],
     isShared: sourceData.isShared === true,
-    isProject: false, // v2.41: clone selalu jadi task non-project (cleaner, original project tetap span tanggalnya)
+    isProject: false,
     date: today,
     dueDate: null,
     startTime: sourceData.startTime || null,
@@ -8976,7 +9018,7 @@ async function bringTaskToToday(sourceRef, sourceDate) {
     boardId: STATE.currentBoardId,
     fromTemplateId: isFromTemplate ? templateId : null,
     fromTemplateName: isFromTemplate ? (sourceData.fromTemplateName || tplName) : null,
-    fromPreviewOf: type === 'real' ? sourceData.id : null,
+    fromPreviewOf: realTaskId,
     fromPreviewDate: sourceDateLabel,
     createdById: me.id,
     createdByName: me.name,
@@ -8989,16 +9031,15 @@ async function bringTaskToToday(sourceRef, sourceDate) {
       byId: me.id, byName: me.name,
       at: new Date().toISOString(),
       note: type === 'real'
-        ? `cloned dari task tanggal ${sourceDateLabel} via Preview Tugas Mendatang`
+        ? `cloned dari proyek tanggal ${sourceDateLabel} via Preview Tugas Mendatang`
         : `materialized dari template "${tplName}" via Preview Tugas Mendatang (claim ${sourceDateLabel})`,
     }],
   };
 
   try {
     await addDoc(collection(STATE.db, 'tasks'), clone);
-    // v2.42-v2.44: Kalau source = template (virtual), "claim" source date supaya template gak auto-generate task lagi di tanggal itu.
-    // Mekanisme anti-double: user clone task forecast Senin ke Sabtu → Senin nanti template SKIP generate.
-    if (isFromTemplate && templateId) {
+    // Claim template untuk anti-double generation di sourceDate
+    if (isFromTemplate && templateId && type === 'virtual') {
       try {
         const tplRef = doc(STATE.db, 'boards', STATE.currentBoardId, 'templates', templateId);
         await updateDoc(tplRef, {
@@ -9006,10 +9047,10 @@ async function bringTaskToToday(sourceRef, sourceDate) {
           updatedAt: serverTimestamp(),
         });
       } catch (e) {
-        console.warn('Gagal claim tanggal template (non-critical, anti-dup tetap jalan via fromTemplateId+date check):', e);
+        console.warn('Gagal claim tanggal template (non-critical):', e);
       }
     }
-    toast(`✅ Task "${clone.title}" dibuat hari ini${isFromTemplate ? ' · template di-claim untuk ' + sourceDate : ''}`, 'success');
+    toast(`✅ Task "${clone.title}" dibuat hari ini${type === 'virtual' ? ' · template di-claim ' + sourceDate : ''}`, 'success');
     closeModal();
   } catch (err) {
     toast('Gagal: ' + err.message, 'error');
