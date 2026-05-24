@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.38 — ApotekKu</title>
+<title>Team Tracker v2.39 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4657,6 +4657,45 @@ function kalKerjaState() {
 }
 
 // v2.34: helper jam (HH:MM arithmetic)
+// v2.39: convert Firestore timestamp / number / Date → "HH:MM" (local time)
+function tsToLocalHHMM(ts) {
+  if (!ts) return null;
+  let d;
+  if (typeof ts === 'number') d = new Date(ts);
+  else if (ts.toDate) d = ts.toDate();
+  else if (ts.seconds) d = new Date(ts.seconds * 1000);
+  else if (typeof ts === 'string') d = new Date(ts);
+  else return null;
+  if (!d || isNaN(d.getTime())) return null;
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// v2.39: extract real working time dari timeLog sessions di tanggal tertentu
+// Return { start: 'HH:MM', end: 'HH:MM' } atau null kalau gak ada session di tanggal itu
+function getTaskTimeFromLog(task, dateStr) {
+  if (!task || !task.timeLog || task.timeLog.length === 0) return null;
+  const sessions = task.timeLog.filter(s => {
+    if (!s || !s.startedAt) return false;
+    const startDay = tsToLocalDateStr(s.startedAt);
+    return startDay === dateStr;
+  });
+  if (sessions.length === 0) return null;
+  let earliestStart = null;
+  let latestEnd = null;
+  sessions.forEach(s => {
+    const startHHMM = tsToLocalHHMM(s.startedAt);
+    if (startHHMM && (!earliestStart || startHHMM < earliestStart)) earliestStart = startHHMM;
+    if (s.endedAt) {
+      const endHHMM = tsToLocalHHMM(s.endedAt);
+      if (endHHMM && (!latestEnd || endHHMM > latestEnd)) latestEnd = endHHMM;
+    }
+  });
+  if (!earliestStart) return null;
+  // Kalau gak ada endedAt (session masih running atau lupa stop), default +1 jam dari start
+  const endTime = latestEnd || kalKerjaAddMinutes(earliestStart, 60);
+  return { start: earliestStart, end: endTime };
+}
+
 function kalKerjaAddMinutes(hhmm, mins) {
   const [h, m] = hhmm.split(':').map(Number);
   const total = h * 60 + m + mins;
@@ -4711,17 +4750,28 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     return isTaskActiveOnDay(t, dateStr, today);
   });
 
-  // Separate timed vs untimed
+  // v2.39: Pisah tasks ke timed/untimed dengan PRIORITAS:
+  //   1. timeLog (data real auto-tracking) — paling akurat
+  //   2. startTime/endTime (jam manual yang user set di task)
+  //   3. Untimed → auto-pack ke slot kosong (skip slot 06-08, mulai dari 08-09)
   const timed = [];
   const untimed = [];
   tasks.forEach(t => {
+    // 1. Cek timeLog real waktu pengerjaan di tanggal ini
+    const realTime = getTaskTimeFromLog(t, dateStr);
+    if (realTime && realTime.start) {
+      timed.push({ task: t, start: realTime.start, end: realTime.end, source: 'timeLog' });
+      return;
+    }
+    // 2. Cek startTime/endTime manual
     if (t.startTime) {
       const start = t.startTime;
-      const end = t.endTime || kalKerjaAddMinutes(start, 60); // default duration 60m
-      timed.push({ task: t, start, end });
-    } else {
-      untimed.push(t);
+      const end = t.endTime || kalKerjaAddMinutes(start, 60);
+      timed.push({ task: t, start, end, source: 'manual' });
+      return;
     }
+    // 3. Untimed
+    untimed.push(t);
   });
 
   // Place timed tasks (spread ke semua slot overlap)
@@ -4735,13 +4785,12 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     });
   });
 
-  // v2.38: Untimed tasks SELALU di-auto-pack (termasuk hari libur).
-  // User minta konsisten dengan Rekap — kalau task proses/done di rekap tanggal X,
-  // mereka harus muncul di Kalender Kerja tanggal X juga (walaupun Sabtu/Minggu).
-  // Slot kosong di hari libur tetap tampil "Libur Sabtu/Minggu" (handled di kalKerjaCellContent).
+  // v2.39: Untimed tasks auto-pack ke slot kosong, mulai dari 08-09 (SKIP slot 06-08).
+  // Slot 06-08 hanya ke-isi kalau ada task yg REAL dikerjakan jam segitu (lewat timeLog atau startTime manual).
   let untimedIdx = 0;
   for (const slot of KALKERJA_TIME_SLOTS) {
     if (slot.lunch) continue;
+    if (slot.label === '06.00-08.00') continue; // skip slot pagi sangat awal
     if (untimedIdx >= untimed.length) break;
     if (result[slot.label].length === 0) {
       result[slot.label].push(untimed[untimedIdx]);
