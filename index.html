@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.46 — ApotekKu</title>
+<title>Team Tracker v2.47 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- v2.47: Chart.js untuk Dashboard analytics -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2655,6 +2657,10 @@ const STATE = {
   kalKerja: null,               // v2.32 — { year, month, memberFilter } state Kalender Kerja
   kalKerjaOverrides: {},        // v2.32 — { '2026-05-memberid-DD-slot': 'override value' } loaded dari Firestore
   kalKerjaHolidays: {},         // v2.34 — { 'YYYY-MM-DD': 'nama libur' } global holidays
+  dashboardPeriod: '7d',        // v2.47 — 'today' | '7d' | '30d' | 'month' | 'custom'
+  dashboardCustomFrom: '',      // v2.47 — custom range from
+  dashboardCustomTo: '',        // v2.47 — custom range to
+  dashboardMember: null,        // v2.47 — null = semua tim, atau memberId untuk filter
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -3953,6 +3959,10 @@ function subscribeTasks() {
       const isEditingCell = active && typeof active.matches === 'function' && active.matches('[data-kk-edit]');
       if (!isEditingCell) renderKalenderKerjaGrid();
     }
+    // v2.47: refresh dashboard data section (gak destroy chart, cuma update angka)
+    if (STATE.currentView === 'dashboard' && typeof dashboardRefreshData === 'function') {
+      dashboardRefreshData();
+    }
 
     // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
@@ -4951,6 +4961,767 @@ function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
   }
   // Hari kerja, slot kosong → empty
   return '';
+}
+
+/* =============================================================
+   v2.47: DASHBOARD ANALYTICS — Phase 1 (Tier 1 lengkap)
+   ============================================================= */
+const DASHBOARD_CHARTS = {}; // store Chart.js instances untuk destroy
+
+function dashboardGetPeriodRange() {
+  const today = todayStr();
+  const period = STATE.dashboardPeriod || '7d';
+  const todayD = new Date(today + 'T12:00:00');
+  function fmt(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  if (period === 'today') return { from: today, to: today, label: 'Hari Ini' };
+  if (period === '7d') {
+    const d = new Date(todayD); d.setDate(d.getDate() - 6);
+    return { from: fmt(d), to: today, label: '7 Hari Terakhir' };
+  }
+  if (period === '30d') {
+    const d = new Date(todayD); d.setDate(d.getDate() - 29);
+    return { from: fmt(d), to: today, label: '30 Hari Terakhir' };
+  }
+  if (period === 'month') {
+    const y = todayD.getFullYear(), m = todayD.getMonth();
+    const first = new Date(y, m, 1);
+    const last = new Date(y, m + 1, 0);
+    return { from: fmt(first), to: fmt(last), label: 'Bulan Ini' };
+  }
+  if (period === 'custom') {
+    return {
+      from: STATE.dashboardCustomFrom || today,
+      to: STATE.dashboardCustomTo || today,
+      label: 'Custom',
+    };
+  }
+  return { from: today, to: today, label: 'Hari Ini' };
+}
+
+// Aggregate semua data untuk dashboard dalam 1 pass
+function dashboardAggregate() {
+  const { from, to } = dashboardGetPeriodRange();
+  const memberFilter = STATE.dashboardMember; // null = semua
+
+  // Tasks di range (skip deleted; include notCompleted utk count notdone)
+  const inRange = STATE.tasks.filter(t => {
+    if (t.isDeleted === true) return false;
+    if (memberFilter && t.assigneeId !== memberFilter && !t.isShared) return false;
+    if (!t.date) return false;
+    if (t.isProject) {
+      const start = t.date;
+      const end = t.dueDate || t.date;
+      // Project overlap dengan range
+      return start <= to && end >= from;
+    }
+    return t.date >= from && t.date <= to;
+  });
+
+  const activeTasks = inRange.filter(t => t.notCompleted !== true);
+  const notDoneTasks = inRange.filter(t => t.notCompleted === true);
+
+  // KPI counts (current state)
+  const total = activeTasks.length;
+  const done = activeTasks.filter(t => t.status === 'done').length;
+  const proses = activeTasks.filter(t => t.status === 'proses').length;
+  const todo = activeTasks.filter(t => t.status === 'todo').length;
+  const notdone = notDoneTasks.length;
+  const completionPct = total > 0 ? Math.round(done * 100 / total) : 0;
+
+  // Per member
+  const byMember = {};
+  (STATE.members || []).forEach(m => {
+    byMember[m.id] = {
+      member: m,
+      total: 0, done: 0, proses: 0, todo: 0, notdone: 0,
+      totalTimeMin: 0,
+      taskWithTime: 0,
+    };
+  });
+  inRange.forEach(t => {
+    const mid = t.assigneeId;
+    if (!byMember[mid]) return;
+    if (t.notCompleted === true) { byMember[mid].notdone++; return; }
+    byMember[mid].total++;
+    if (t.status === 'done') byMember[mid].done++;
+    else if (t.status === 'proses') byMember[mid].proses++;
+    else if (t.status === 'todo') byMember[mid].todo++;
+    // Time tracking — pakai totalTimeMinutes helper
+    if (typeof totalTimeMinutes === 'function') {
+      const mins = totalTimeMinutes(t);
+      if (mins > 0) {
+        byMember[mid].totalTimeMin += mins;
+        byMember[mid].taskWithTime++;
+      }
+    }
+  });
+
+  // Per category
+  const byCategory = {};
+  (CATEGORIES || []).forEach(c => {
+    byCategory[c.id] = { cat: c, total: 0, done: 0, notdone: 0 };
+  });
+  inRange.forEach(t => {
+    const cid = t.category;
+    if (!byCategory[cid]) return;
+    if (t.notCompleted === true) { byCategory[cid].notdone++; return; }
+    byCategory[cid].total++;
+    if (t.status === 'done') byCategory[cid].done++;
+  });
+
+  // Per day (line chart trend)
+  const byDay = {};
+  // init semua hari di range
+  let d = new Date(from + 'T12:00:00');
+  const endD = new Date(to + 'T12:00:00');
+  while (d <= endD) {
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    byDay[k] = { total: 0, done: 0 };
+    d.setDate(d.getDate() + 1);
+  }
+  // populate (untuk task non-project pakai t.date; project: distribute ke setiap hari range overlap)
+  inRange.forEach(t => {
+    if (t.notCompleted === true) return;
+    if (t.isProject) {
+      const ts = t.date, te = t.dueDate || t.date;
+      const ds = new Date(Math.max(new Date(ts + 'T12:00:00').getTime(), new Date(from + 'T12:00:00').getTime()));
+      const de = new Date(Math.min(new Date(te + 'T12:00:00').getTime(), new Date(to + 'T12:00:00').getTime()));
+      const cur = new Date(ds);
+      while (cur <= de) {
+        const k = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`;
+        if (byDay[k]) {
+          byDay[k].total++;
+          if (t.status === 'done') byDay[k].done++;
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    } else {
+      if (byDay[t.date]) {
+        byDay[t.date].total++;
+        if (t.status === 'done') byDay[t.date].done++;
+      }
+    }
+  });
+
+  // Per member × kategori (stacked bar)
+  const memberCategoryMatrix = {};
+  (STATE.members || []).forEach(m => {
+    memberCategoryMatrix[m.id] = {};
+    (CATEGORIES || []).forEach(c => { memberCategoryMatrix[m.id][c.id] = 0; });
+  });
+  inRange.forEach(t => {
+    if (t.notCompleted === true) return;
+    if (memberCategoryMatrix[t.assigneeId] && t.category && memberCategoryMatrix[t.assigneeId][t.category] !== undefined) {
+      memberCategoryMatrix[t.assigneeId][t.category]++;
+    }
+  });
+
+  // Top tidak selesai
+  const topNotDone = notDoneTasks
+    .slice()
+    .sort((a, b) => (b.notCompletedAt || 0) - (a.notCompletedAt || 0))
+    .slice(0, 5);
+
+  // Task overdue (carry-over, scheduled lampau, belum done, bukan project, bukan notdone)
+  const today = todayStr();
+  const overdue = STATE.tasks.filter(t =>
+    t.isDeleted !== true && t.notCompleted !== true
+    && !t.isProject
+    && t.date && t.date < today
+    && t.status !== 'done'
+    && (!memberFilter || t.assigneeId === memberFilter || t.isShared)
+  );
+
+  // Template missed — template yg gak generate task hari ini padahal seharusnya
+  // Approach simple: hitung berapa hari di range, template yg active matching daysOfWeek tapi gak ada task fromTemplateId match
+  const templateMissed = [];
+  (STATE.templates || []).forEach(tpl => {
+    if (tpl.isDeleted || tpl.active === false || tpl.frequency === 'manual') return;
+    if (!Array.isArray(tpl.items) || tpl.items.length === 0) return;
+    // Hitung tanggal di range yg seharusnya generate
+    let expectedDays = 0, actualGenerated = 0;
+    const cur = new Date(from + 'T12:00:00');
+    const endC = new Date(to + 'T12:00:00');
+    while (cur <= endC) {
+      const k = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`;
+      const dow = cur.getDay();
+      const dom = cur.getDate();
+      let shouldGen = false;
+      const freq = tpl.frequency;
+      if (freq === 'daily') {
+        const dows = Array.isArray(tpl.daysOfWeek) && tpl.daysOfWeek.length > 0
+          ? tpl.daysOfWeek.map(Number) : [0,1,2,3,4,5,6];
+        shouldGen = dows.includes(dow);
+      } else if (freq === 'weekly') shouldGen = Number(tpl.dayOfWeek) === dow;
+      else if (freq === 'monthly') {
+        const lastDom = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+        const target = tpl.dayOfMonth === 'last' ? lastDom : Number(tpl.dayOfMonth);
+        shouldGen = target === dom;
+      }
+      if (shouldGen) {
+        expectedDays++;
+        const hasTask = STATE.tasks.some(t =>
+          t.fromTemplateId === tpl.id && t.date === k && t.isDeleted !== true);
+        if (hasTask) actualGenerated++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    const missed = expectedDays - actualGenerated;
+    if (missed > 0) {
+      templateMissed.push({ tpl, expectedDays, actualGenerated, missed });
+    }
+  });
+  templateMissed.sort((a, b) => b.missed - a.missed);
+
+  // Activity feed: ambil semua activity entries dari semua task, sort desc
+  const activityFeed = [];
+  STATE.tasks.forEach(t => {
+    if (t.isDeleted === true) return;
+    if (memberFilter && t.assigneeId !== memberFilter && !t.isShared) return;
+    (t.activity || []).forEach(a => {
+      if (!a || !a.at) return;
+      activityFeed.push({ ...a, taskId: t.id, taskTitle: t.title, taskAssignee: t.assigneeName });
+    });
+  });
+  activityFeed.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  const recentActivity = activityFeed.slice(0, 20);
+
+  return {
+    period: { from, to },
+    total, done, proses, todo, notdone, completionPct,
+    byMember, byCategory, byDay, memberCategoryMatrix,
+    topNotDone, overdue, templateMissed, recentActivity,
+    activeTasks, notDoneTasks,
+  };
+}
+
+function renderDashboardPageHtml() {
+  const me = STATE.currentMember;
+  const period = STATE.dashboardPeriod || '7d';
+  const memberOpts = (STATE.members || []).map(m =>
+    `<option value="${m.id}" ${STATE.dashboardMember === m.id ? 'selected' : ''}>${escapeHtml(m.name)}${m.id === me.id ? ' (saya)' : ''}</option>`).join('');
+
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">📈 Dashboard</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Analytics & insight tim B2C — klik angka/baris untuk lihat detail</div>
+      </div>
+      <div class="page-toolbar" style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="dash-member" class="select" style="padding:6px 10px;font-size:13px">
+          <option value="">Semua Tim</option>${memberOpts}
+        </select>
+      </div>
+    </div>
+
+    <!-- Period selector chips -->
+    <div style="display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;margin-right:4px">PERIODE</span>
+      <button class="chip ${period === 'today' ? 'active' : ''}" data-dash-period="today">Hari Ini</button>
+      <button class="chip ${period === '7d' ? 'active' : ''}" data-dash-period="7d">7 Hari</button>
+      <button class="chip ${period === '30d' ? 'active' : ''}" data-dash-period="30d">30 Hari</button>
+      <button class="chip ${period === 'month' ? 'active' : ''}" data-dash-period="month">Bulan Ini</button>
+      <button class="chip ${period === 'custom' ? 'active' : ''}" data-dash-period="custom">Custom</button>
+      ${period === 'custom' ? `
+        <input type="date" id="dash-custom-from" class="input" value="${STATE.dashboardCustomFrom || ''}" style="padding:5px 8px;font-size:12px;width:140px">
+        <span style="font-size:11px">→</span>
+        <input type="date" id="dash-custom-to" class="input" value="${STATE.dashboardCustomTo || ''}" style="padding:5px 8px;font-size:12px;width:140px">
+      ` : ''}
+      <span id="dash-period-label" style="margin-left:8px;font-size:11px;color:var(--text-muted);font-style:italic"></span>
+    </div>
+
+    <!-- Section 1: KPI Snapshot -->
+    <div id="dash-kpi" style="margin-bottom:22px"></div>
+
+    <!-- Section 2: Performa Tim -->
+    <div style="margin-bottom:22px">
+      <h2 style="font-size:15px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        👥 Performa Tim
+        <span style="font-size:11px;color:var(--text-muted);font-weight:400">klik baris → detail task</span>
+      </h2>
+      <div id="dash-team"></div>
+    </div>
+
+    <!-- Section 3: Charts (3 chart side-by-side) -->
+    <div style="margin-bottom:22px">
+      <h2 style="font-size:15px;font-weight:700;margin-bottom:10px">📊 Visualisasi</h2>
+      <div id="dash-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px"></div>
+    </div>
+
+    <!-- Section 4: Insight & Bottleneck -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:22px">
+      <div id="dash-insight-notdone"></div>
+      <div id="dash-insight-overdue"></div>
+      <div id="dash-insight-category"></div>
+      <div id="dash-insight-template"></div>
+    </div>
+
+    <!-- Section 5: Activity Feed -->
+    <div style="margin-bottom:22px">
+      <h2 style="font-size:15px;font-weight:700;margin-bottom:10px">🔔 Aktivitas Terkini</h2>
+      <div id="dash-feed"></div>
+    </div>
+  `;
+}
+
+function bindDashboardPage() {
+  // Period chips
+  document.querySelectorAll('[data-dash-period]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      STATE.dashboardPeriod = btn.dataset.dashPeriod;
+      renderMain();
+    });
+  });
+  // Member filter
+  const memSel = document.getElementById('dash-member');
+  if (memSel) memSel.addEventListener('change', () => {
+    STATE.dashboardMember = memSel.value || null;
+    dashboardRefreshData();
+  });
+  // Custom date inputs
+  const cFrom = document.getElementById('dash-custom-from');
+  const cTo = document.getElementById('dash-custom-to');
+  if (cFrom) cFrom.addEventListener('change', () => { STATE.dashboardCustomFrom = cFrom.value; dashboardRefreshData(); });
+  if (cTo) cTo.addEventListener('change', () => { STATE.dashboardCustomTo = cTo.value; dashboardRefreshData(); });
+  // First-time render
+  dashboardRefreshData();
+}
+
+// Full refresh data (re-aggregate + re-render semua section)
+function dashboardRefreshData() {
+  if (STATE.currentView !== 'dashboard') return;
+  const d = dashboardAggregate();
+  // Period label
+  const lbl = document.getElementById('dash-period-label');
+  if (lbl) lbl.textContent = `${d.period.from} → ${d.period.to}`;
+  dashboardRenderKPI(d);
+  dashboardRenderTeam(d);
+  dashboardRenderCharts(d);
+  dashboardRenderInsight(d);
+  dashboardRenderFeed(d);
+}
+
+function dashboardRenderKPI(d) {
+  const root = document.getElementById('dash-kpi');
+  if (!root) return;
+  const cards = [
+    { label: 'Total Task', value: d.total, color: 'var(--text)', sub: `Pada periode ini`, kind: 'all' },
+    { label: 'Selesai', value: d.done, color: 'var(--success)', sub: `${d.completionPct}% completion rate`, kind: 'done' },
+    { label: 'Sedang Proses', value: d.proses, color: 'var(--warning)', sub: `Aktif dikerjakan`, kind: 'proses' },
+    { label: 'Belum Mulai', value: d.todo, color: 'var(--info)', sub: `Status TODO`, kind: 'todo' },
+    { label: '🚫 Tidak Selesai', value: d.notdone, color: '#dc2626', sub: `Ditandai gak selesai`, kind: 'notdone' },
+  ];
+  root.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+      ${cards.map(c => `
+        <div class="recap-summary-card dash-kpi-card" data-dash-kpi="${c.kind}" style="cursor:pointer">
+          <div class="recap-summary-label">${c.label}</div>
+          <div class="recap-summary-value" style="color:${c.color}">${c.value}</div>
+          <div class="recap-summary-detail">${escapeHtml(c.sub)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  // Bind click → drill
+  root.querySelectorAll('[data-dash-kpi]').forEach(el => {
+    el.addEventListener('click', () => openDashboardDrillModal('kpi', el.dataset.dashKpi));
+  });
+}
+
+function dashboardRenderTeam(d) {
+  const root = document.getElementById('dash-team');
+  if (!root) return;
+  const rows = Object.values(d.byMember)
+    .sort((a, b) => {
+      const pa = a.total > 0 ? a.done / a.total : 0;
+      const pb = b.total > 0 ? b.done / b.total : 0;
+      return pb - pa;
+    });
+  if (rows.length === 0) {
+    root.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-muted)">Belum ada anggota.</div>`;
+    return;
+  }
+  const html = `
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead style="background:#f3f4f6">
+          <tr>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">Member</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">Total</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">Done</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">%</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">Proses</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">TODO</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700;color:#dc2626">Tdk Selesai</th>
+            <th style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700">Avg Waktu</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => {
+            const m = r.member;
+            const pct = r.total > 0 ? Math.round(r.done * 100 / r.total) : 0;
+            const avgMin = r.taskWithTime > 0 ? Math.round(r.totalTimeMin / r.taskWithTime) : 0;
+            const avgStr = avgMin > 0 ? (typeof fmtMinutes === 'function' ? fmtMinutes(avgMin) : avgMin + 'm') : '—';
+            const pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : '#dc2626';
+            return `
+              <tr data-dash-member="${m.id}" style="cursor:pointer;transition:background .12s">
+                <td style="padding:10px 12px;border-bottom:1px solid var(--border)">
+                  <span style="display:inline-flex;align-items:center;gap:8px;font-weight:600">
+                    ${avatarHtml(m.name)} ${escapeHtml(m.name)}
+                  </span>
+                </td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">${r.total}</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--success);font-weight:700">${r.done}</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-weight:700;color:${pctColor}">${pct}%</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--warning)">${r.proses}</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--info)">${r.todo}</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:${r.notdone > 0 ? '#dc2626' : 'var(--text-muted)'};font-weight:${r.notdone > 0 ? '700' : '400'}">${r.notdone}</td>
+                <td style="text-align:right;padding:10px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--text-muted)">${avgStr}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  root.innerHTML = html;
+  root.querySelectorAll('[data-dash-member]').forEach(tr => {
+    tr.addEventListener('mouseenter', () => tr.style.background = '#f9fafb');
+    tr.addEventListener('mouseleave', () => tr.style.background = '');
+    tr.addEventListener('click', () => openDashboardDrillModal('member', tr.dataset.dashMember));
+  });
+}
+
+function dashboardRenderCharts(d) {
+  const root = document.getElementById('dash-charts');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="dash-chart-box" style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--text)">Distribusi Status</div>
+      <div style="position:relative;height:220px"><canvas id="dash-chart-status"></canvas></div>
+    </div>
+    <div class="dash-chart-box" style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--text)">Trend Completion Harian</div>
+      <div style="position:relative;height:220px"><canvas id="dash-chart-trend"></canvas></div>
+    </div>
+    <div class="dash-chart-box" style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--text)">Workload Member × Kategori</div>
+      <div style="position:relative;height:220px"><canvas id="dash-chart-workload"></canvas></div>
+    </div>
+  `;
+  // Wait next tick supaya canvas terpasang di DOM, baru bikin chart
+  setTimeout(() => dashboardBuildCharts(d), 0);
+}
+
+function dashboardBuildCharts(d) {
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js belum loaded');
+    return;
+  }
+  // Destroy chart lama biar gak memory leak
+  Object.keys(DASHBOARD_CHARTS).forEach(k => {
+    try { DASHBOARD_CHARTS[k].destroy(); } catch (e) {}
+    delete DASHBOARD_CHARTS[k];
+  });
+
+  // Chart 1: donut status
+  const statusCtx = document.getElementById('dash-chart-status');
+  if (statusCtx) {
+    DASHBOARD_CHARTS.status = new Chart(statusCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Done', 'Proses', 'Todo', 'Tidak Selesai'],
+        datasets: [{
+          data: [d.done, d.proses, d.todo, d.notdone],
+          backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#dc2626'],
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 } } },
+        },
+        onClick: (evt, els) => {
+          if (!els.length) return;
+          const labels = ['done', 'proses', 'todo', 'notdone'];
+          openDashboardDrillModal('kpi', labels[els[0].index]);
+        },
+      },
+    });
+  }
+
+  // Chart 2: trend completion daily
+  const trendCtx = document.getElementById('dash-chart-trend');
+  if (trendCtx) {
+    const days = Object.keys(d.byDay).sort();
+    const pctData = days.map(k => {
+      const dd = d.byDay[k];
+      return dd.total > 0 ? Math.round(dd.done * 100 / dd.total) : 0;
+    });
+    const labels = days.map(k => k.slice(5)); // MM-DD
+    DASHBOARD_CHARTS.trend = new Chart(trendCtx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Completion %',
+          data: pctData,
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.15)',
+          fill: true, tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
+          x: { ticks: { font: { size: 10 }, maxRotation: 0 } },
+        },
+      },
+    });
+  }
+
+  // Chart 3: stacked bar member × category
+  const wlCtx = document.getElementById('dash-chart-workload');
+  if (wlCtx) {
+    const members = (STATE.members || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const cats = CATEGORIES || [];
+    const datasets = cats.map(c => ({
+      label: c.name || c.id,
+      data: members.map(m => d.memberCategoryMatrix[m.id]?.[c.id] || 0),
+      backgroundColor: c.color || '#888',
+    }));
+    DASHBOARD_CHARTS.workload = new Chart(wlCtx, {
+      type: 'bar',
+      data: {
+        labels: members.map(m => m.name),
+        datasets,
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+        scales: {
+          x: { stacked: true, ticks: { font: { size: 11 } } },
+          y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+        },
+      },
+    });
+  }
+}
+
+function dashboardRenderInsight(d) {
+  // Top Tidak Selesai
+  const notdoneRoot = document.getElementById('dash-insight-notdone');
+  if (notdoneRoot) {
+    notdoneRoot.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px;height:100%">
+        <div style="font-weight:700;font-size:14px;margin-bottom:10px;color:#dc2626">🚫 Top 5 Tidak Selesai</div>
+        ${d.topNotDone.length === 0
+          ? `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0">🎉 Tidak ada task tidak selesai pada periode ini.</div>`
+          : d.topNotDone.map(t => {
+              const ts = t.notCompletedAt ? new Date(t.notCompletedAt).toLocaleDateString('id-ID') : '?';
+              return `
+                <div data-dash-open-task="${t.id}" style="padding:8px 0;border-bottom:1px solid #f3f4f6;cursor:pointer">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:2px">${escapeHtml(t.title)}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(t.assigneeName || '?')} · ${escapeHtml(ts)}</div>
+                  <div style="font-size:11px;color:#991b1b;margin-top:3px;line-height:1.4">📝 ${escapeHtml((t.kendala || '').slice(0, 80))}${(t.kendala || '').length > 80 ? '…' : ''}</div>
+                </div>
+              `;
+            }).join('')}
+      </div>
+    `;
+    notdoneRoot.querySelectorAll('[data-dash-open-task]').forEach(el => {
+      el.addEventListener('click', () => openTaskModal(el.dataset.dashOpenTask));
+    });
+  }
+
+  // Overdue
+  const overdueRoot = document.getElementById('dash-insight-overdue');
+  if (overdueRoot) {
+    overdueRoot.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px;height:100%">
+        <div style="font-weight:700;font-size:14px;margin-bottom:10px;color:#f59e0b">⏰ Task Overdue Belum Selesai</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Task scheduled tanggal lampau, status masih TODO/PROSES (carry-over).</div>
+        ${d.overdue.length === 0
+          ? `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0">✅ Semua task on-track.</div>`
+          : d.overdue.slice(0, 5).map(t => {
+              const ageDays = Math.floor((new Date(todayStr()) - new Date(t.date)) / 86400000);
+              return `
+                <div data-dash-open-task="${t.id}" style="padding:8px 0;border-bottom:1px solid #f3f4f6;cursor:pointer">
+                  <div style="font-weight:600;font-size:13px">${escapeHtml(t.title)}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(t.assigneeName || '?')} · jadwal: ${escapeHtml(t.date)} <strong style="color:#dc2626">(${ageDays} hari lalu)</strong></div>
+                </div>
+              `;
+            }).join('') + (d.overdue.length > 5 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:6px;text-align:center">+${d.overdue.length - 5} task overdue lainnya</div>` : '')}
+      </div>
+    `;
+    overdueRoot.querySelectorAll('[data-dash-open-task]').forEach(el => {
+      el.addEventListener('click', () => openTaskModal(el.dataset.dashOpenTask));
+    });
+  }
+
+  // Kategori bottleneck
+  const catRoot = document.getElementById('dash-insight-category');
+  if (catRoot) {
+    const catRows = Object.values(d.byCategory)
+      .sort((a, b) => b.notdone - a.notdone);
+    catRoot.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px;height:100%">
+        <div style="font-weight:700;font-size:14px;margin-bottom:10px">🏷️ Kategori Performance</div>
+        ${catRows.map(r => {
+          const pct = r.total > 0 ? Math.round(r.done * 100 / r.total) : 0;
+          return `
+            <div style="padding:8px 0;border-bottom:1px solid #f3f4f6">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-weight:600;font-size:13px;color:${r.cat.color || 'inherit'}">${escapeHtml(r.cat.name)}</span>
+                <span style="font-size:12px;color:var(--text-muted)">${r.done}/${r.total} done · ${pct}%</span>
+              </div>
+              <div style="height:4px;background:#f3f4f6;border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${r.cat.color || 'var(--success)'};transition:width .3s"></div>
+              </div>
+              ${r.notdone > 0 ? `<div style="font-size:10.5px;color:#dc2626;margin-top:3px">🚫 ${r.notdone} ditandai tidak selesai</div>` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // Template missed
+  const tplRoot = document.getElementById('dash-insight-template');
+  if (tplRoot) {
+    tplRoot.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px;height:100%">
+        <div style="font-weight:700;font-size:14px;margin-bottom:10px">📋 Template Effectiveness</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Template yang gak generate task pada hari yang seharusnya (app gak dibuka / di-claim manual / dll).</div>
+        ${d.templateMissed.length === 0
+          ? `<div style="font-size:12px;color:var(--success);text-align:center;padding:20px 0">✅ Semua template generate sesuai jadwal.</div>`
+          : d.templateMissed.slice(0, 5).map(r => `
+              <div style="padding:8px 0;border-bottom:1px solid #f3f4f6">
+                <div style="font-weight:600;font-size:13px">${escapeHtml(r.tpl.name)}</div>
+                <div style="font-size:11px;color:var(--text-muted)">${r.actualGenerated}/${r.expectedDays} hari generate · <strong style="color:#dc2626">${r.missed} missed</strong></div>
+              </div>
+            `).join('')}
+      </div>
+    `;
+  }
+}
+
+function dashboardRenderFeed(d) {
+  const root = document.getElementById('dash-feed');
+  if (!root) return;
+  if (d.recentActivity.length === 0) {
+    root.innerHTML = `<div style="background:white;border:1px solid var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--text-muted)">Belum ada aktivitas dalam periode ini.</div>`;
+    return;
+  }
+  const html = d.recentActivity.map(a => {
+    const icon = a.type === 'progress_changed' ? '📊'
+      : a.type === 'status_changed' ? (a.to === 'done' ? '✅' : a.to === 'proses' ? '🔄' : '↺')
+      : a.type === 'marked_not_completed' ? '🚫'
+      : a.type === 'restored_from_not_completed' ? '↺'
+      : a.type === 'task_deleted' ? '🗑️'
+      : a.type === 'moved_via_preview' ? '🔀'
+      : a.type === 'created' ? '✨'
+      : '•';
+    let text;
+    switch (a.type) {
+      case 'created': text = 'membuat task'; break;
+      case 'status_changed': text = `ubah status <strong>${escapeHtml(a.from || '?')}</strong> → <strong>${escapeHtml(a.to || '?')}</strong>`; break;
+      case 'progress_changed': text = `update progress ${a.from}% → ${a.to}%`; break;
+      case 'marked_not_completed': text = `tandai <strong>tidak selesai</strong>`; break;
+      case 'restored_from_not_completed': text = `kembalikan task ke kanban`; break;
+      case 'task_deleted': text = `hapus task permanen`; break;
+      case 'moved_via_preview': text = `pindah ${escapeHtml(a.from || '?')} → ${escapeHtml(a.to || '?')}`; break;
+      default: text = escapeHtml(a.type);
+    }
+    return `
+      <div data-dash-open-task="${a.taskId}" style="display:flex;gap:10px;padding:10px 14px;background:white;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer;align-items:center">
+        <div style="font-size:18px">${icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12.5px;line-height:1.4">
+            <strong>${escapeHtml(a.byName || '?')}</strong> ${text}
+            <span style="color:var(--text-muted)"> di "${escapeHtml(a.taskTitle || '?')}"</span>
+          </div>
+          <div style="font-size:10.5px;color:var(--text-muted);margin-top:2px">${typeof timeAgo === 'function' ? timeAgo(a.at) : a.at.slice(0, 16)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  root.innerHTML = html;
+  root.querySelectorAll('[data-dash-open-task]').forEach(el => {
+    el.addEventListener('click', () => openTaskModal(el.dataset.dashOpenTask));
+  });
+}
+
+// Modal drill-down — show list task berdasarkan kategori KPI atau member
+function openDashboardDrillModal(kind, value) {
+  const d = dashboardAggregate();
+  let title = '';
+  let tasks = [];
+  if (kind === 'kpi') {
+    if (value === 'all') { title = `Semua Task (${d.period.from} → ${d.period.to})`; tasks = d.activeTasks; }
+    else if (value === 'done') { title = `Task Selesai`; tasks = d.activeTasks.filter(t => t.status === 'done'); }
+    else if (value === 'proses') { title = `Task Sedang Proses`; tasks = d.activeTasks.filter(t => t.status === 'proses'); }
+    else if (value === 'todo') { title = `Task Belum Mulai`; tasks = d.activeTasks.filter(t => t.status === 'todo'); }
+    else if (value === 'notdone') { title = `Task Tidak Selesai`; tasks = d.notDoneTasks; }
+  } else if (kind === 'member') {
+    const m = STATE.members.find(x => x.id === value);
+    if (!m) return;
+    title = `Detail Task — ${m.name}`;
+    tasks = [
+      ...d.activeTasks.filter(t => t.assigneeId === value || t.isShared),
+      ...d.notDoneTasks.filter(t => t.assigneeId === value || t.isShared),
+    ];
+  }
+
+  const rows = tasks.length === 0
+    ? `<div style="padding:30px;text-align:center;color:var(--text-muted)">Gak ada task untuk filter ini.</div>`
+    : tasks.map(t => {
+        const cat = (CATEGORIES || []).find(c => c.id === t.category);
+        const catBadge = cat ? `<span class="category-badge" style="background:${cat.color}20;color:${cat.color}">${escapeHtml(cat.short || cat.name)}</span>` : '';
+        let status = t.notCompleted ? 'TIDAK SELESAI' : (t.status || 'todo').toUpperCase();
+        const statusBg = t.notCompleted ? 'background:#fee2e2;color:#991b1b' :
+          t.status === 'done' ? 'background:#d1fae5;color:#065f46' :
+          t.status === 'proses' ? 'background:#fef3c7;color:#92400e' :
+          'background:#dbeafe;color:#1e40af';
+        return `
+          <div data-dash-drill-task="${t.id}" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;gap:10px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+                ${catBadge}
+                <strong style="font-size:13px">${escapeHtml(t.title || '(no title)')}</strong>
+              </div>
+              <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(t.assigneeName || '?')} · ${escapeHtml(t.date || '?')}</div>
+            </div>
+            <span style="font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:100px;${statusBg}">${status}</span>
+          </div>
+        `;
+      }).join('');
+
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">📊 ${escapeHtml(title)}</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:14px 18px;max-height:70vh;overflow-y:auto">
+      <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:10px">${tasks.length} task — klik task untuk buka detail</div>
+      <div>${rows}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Tutup</button>
+    </div>
+  `;
+  showModal(html, { size: 'lg' });
+  document.querySelectorAll('[data-dash-drill-task]').forEach(el => {
+    el.addEventListener('click', () => {
+      const tid = el.dataset.dashDrillTask;
+      closeModal();
+      setTimeout(() => openTaskModal(tid), 100);
+    });
+  });
 }
 
 function renderKalenderKerjaPageHtml() {
@@ -7037,6 +7808,9 @@ function renderMain() {
           <div class="sidebar-title">Team Tracker</div>
         </div>
         <nav class="sidebar-nav">
+          <button class="sidebar-nav-item ${STATE.currentView === 'dashboard' ? 'active' : ''}" data-nav="dashboard">
+            <span class="sidebar-nav-icon">📈</span>Dashboard
+          </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'kanban' ? 'active' : ''}" data-nav="kanban">
             <span class="sidebar-nav-icon">📋</span>Kanban Board
           </button>
@@ -7108,15 +7882,17 @@ function renderMain() {
         </header>
 
         <div class="page-content">
-          ${STATE.currentView === 'recap'
-            ? renderRecapPageHtml()
-            : (STATE.currentView === 'project'
-              ? renderProjectPageHtml()
-              : (STATE.currentView === 'notdone'
-                ? renderNotDonePageHtml()
-                : (STATE.currentView === 'kalkerja'
-                  ? renderKalenderKerjaPageHtml()
-                  : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))))}
+          ${STATE.currentView === 'dashboard'
+            ? renderDashboardPageHtml()
+            : (STATE.currentView === 'recap'
+              ? renderRecapPageHtml()
+              : (STATE.currentView === 'project'
+                ? renderProjectPageHtml()
+                : (STATE.currentView === 'notdone'
+                  ? renderNotDonePageHtml()
+                  : (STATE.currentView === 'kalkerja'
+                    ? renderKalenderKerjaPageHtml()
+                    : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))}
         </div>
       </main>
       <!-- v2.26: Floating Chat Button + Panel -->
@@ -7186,8 +7962,8 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // v2.26-v2.32: View switches
-      if (target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja') {
+      // v2.26-v2.47: View switches (tambah 'dashboard')
+      if (target === 'dashboard' || target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -7227,6 +8003,10 @@ function renderMain() {
   // v2.32: Kalender Kerja Bulanan
   if (STATE.currentView === 'kalkerja') {
     bindKalenderKerjaPage();
+  }
+  // v2.47: Dashboard
+  if (STATE.currentView === 'dashboard') {
+    bindDashboardPage();
   }
 
   // Logout
