@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.45 — ApotekKu</title>
+<title>Team Tracker v2.46 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2753,7 +2753,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -3946,8 +3946,13 @@ function subscribeTasks() {
     // v2.30: refresh sidebar badges (count "Tidak Selesai") real-time
     updateSidebarBadges();
     // v2.34: invalidate Kalender Kerja schedule cache & re-render kalau lagi di view itu
+    // v2.46: SKIP re-render kalau user lagi edit cell (preserve typing) — re-render bakal hapus cell DOM-nya
     if (typeof kalKerjaInvalidateCache === 'function') kalKerjaInvalidateCache();
-    if (STATE.currentView === 'kalkerja') renderKalenderKerjaGrid();
+    if (STATE.currentView === 'kalkerja') {
+      const active = document.activeElement;
+      const isEditingCell = active && typeof active.matches === 'function' && active.matches('[data-kk-edit]');
+      if (!isEditingCell) renderKalenderKerjaGrid();
+    }
 
     // Setelah snapshot pertama, mark flag tasks ready
     if (firstSnap) {
@@ -5157,16 +5162,15 @@ function openHolidaysModal() {
 async function saveKalKerjaOverride(key, value) {
   const s = kalKerjaState();
   const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
+  // v2.46: update local state DULU supaya UI responsive (gak nunggu Firestore round-trip)
+  STATE.kalKerjaOverrides = STATE.kalKerjaOverrides || {};
   STATE.kalKerjaOverrides[key] = value;
-  try {
-    await setDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId), {
-      overrides: STATE.kalKerjaOverrides,
-      updatedAt: serverTimestamp(),
-      updatedBy: STATE.currentMember?.name || '?',
-    }, { merge: true });
-  } catch (err) {
-    toast('Gagal save: ' + err.message, 'error');
-  }
+  // Firestore write — kalau gagal, throw supaya caller bisa handle
+  await setDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId), {
+    overrides: STATE.kalKerjaOverrides,
+    updatedAt: serverTimestamp(),
+    updatedBy: STATE.currentMember?.name || '?',
+  }, { merge: true });
 }
 
 function renderKalenderKerjaGrid() {
@@ -5258,22 +5262,51 @@ function renderKalenderKerjaGrid() {
   html += `</div>`;
   root.innerHTML = html;
 
-  // Bind editable cells
+  // v2.46: Bind editable cells — save on input (debounced) supaya lebih reliable.
+  // Sebelumnya cuma save di blur — kalau cell DOM ke-replace mid-edit (race dengan re-render),
+  // value hilang & blur gak fire → user kira "gak tersimpan".
+  // Sekarang: save tiap 700ms setelah user berhenti ketik, plus tetap save di blur sebagai backup.
   root.querySelectorAll('[data-kk-edit]').forEach(cell => {
     const key = cell.dataset.kkEdit;
     let original = cell.textContent;
-    cell.addEventListener('focus', () => { original = cell.textContent; });
-    cell.addEventListener('blur', async () => {
-      const newVal = cell.textContent.trim();
+    let saveTimer = null;
+    const doSave = async (newVal) => {
       if (newVal === original) return;
-      await saveKalKerjaOverride(key, newVal);
-      toast('Override tersimpan', 'success');
+      try {
+        await saveKalKerjaOverride(key, newVal);
+        // Visual feedback: flash hijau briefly
+        cell.style.transition = 'background 0.3s';
+        const prevBg = cell.style.background;
+        cell.style.background = '#d1fae5';
+        setTimeout(() => { cell.style.background = prevBg; }, 600);
+        original = newVal; // update baseline supaya gak save berulang
+      } catch (err) {
+        console.error('Gagal save override', err);
+        toast('Gagal save: ' + err.message, 'error');
+      }
+    };
+    cell.addEventListener('focus', () => { original = cell.textContent; });
+    cell.addEventListener('input', () => {
+      // Debounce 700ms
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        saveTimer = null;
+        const newVal = cell.textContent.trim();
+        doSave(newVal);
+      }, 700);
+    });
+    cell.addEventListener('blur', async () => {
+      // Save final saat blur (backup, kalau debounce belum sempat fire)
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      const newVal = cell.textContent.trim();
+      await doSave(newVal);
     });
     cell.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        cell.blur();
+        cell.blur(); // trigger save
       } else if (e.key === 'Escape') {
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
         cell.textContent = original;
         cell.blur();
       }
