@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.49 — ApotekKu</title>
+<title>Team Tracker v2.50 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -8331,17 +8331,6 @@ function renderMain() {
           <button class="sidebar-nav-item ${STATE.currentView === 'kalkerja' ? 'active' : ''}" data-nav="kalkerja">
             <span class="sidebar-nav-icon">📋</span>Kalender Kerja
           </button>
-          <div class="sidebar-nav-section">Konfigurasi</div>
-          <button class="sidebar-nav-item" data-nav="labels">
-            <span class="sidebar-nav-icon">🏷️</span>Labels
-          </button>
-          <button class="sidebar-nav-item" data-nav="templates">
-            <span class="sidebar-nav-icon">📋</span>Template
-          </button>
-          <div class="sidebar-nav-section">Tools</div>
-          <button class="sidebar-nav-item" data-nav="members">
-            <span class="sidebar-nav-icon">👥</span>Data Pengguna
-          </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'catatan' ? 'active' : ''}" data-nav="catatan">
             <span class="sidebar-nav-icon">📌</span>Catatan Penting
             ${(() => {
@@ -8356,8 +8345,19 @@ function renderMain() {
               return upcoming > 0 ? `<span class="sidebar-nav-badge" style="background:#f59e0b">${upcoming}</span>` : '';
             })()}
           </button>
+          <div class="sidebar-nav-section">Konfigurasi</div>
+          <button class="sidebar-nav-item" data-nav="labels">
+            <span class="sidebar-nav-icon">🏷️</span>Labels
+          </button>
+          <button class="sidebar-nav-item" data-nav="templates">
+            <span class="sidebar-nav-icon">📋</span>Template
+          </button>
           <button class="sidebar-nav-item ${STATE.currentView === 'berkas' ? 'active' : ''}" data-nav="berkas">
             <span class="sidebar-nav-icon">📎</span>Berkas Penting
+          </button>
+          <div class="sidebar-nav-section">Tools</div>
+          <button class="sidebar-nav-item" data-nav="members">
+            <span class="sidebar-nav-icon">👥</span>Data Pengguna
           </button>
           <button class="sidebar-nav-item" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
