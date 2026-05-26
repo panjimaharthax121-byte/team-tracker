@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.50 — ApotekKu</title>
+<title>Team Tracker v2.51 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -2696,7 +2696,12 @@ const LS_KEYS = {
   CURRENT_BOARD_ID: 'team_tracker.currentBoardId.v1',
   NOTIF_SETTINGS: 'team_tracker.notifSettings.v1',
   LAST_CHAT_READ_AT: 'team_tracker.lastChatReadAt.v1',
+  NOTIF_HISTORY: 'team_tracker.notifHistory.v1', // v2.51 — history notif yang pernah muncul
 };
+
+// v2.51 — Notif history config
+const NOTIF_HISTORY_MAX = 100;       // max items disimpan, anti bloat
+const NOTIF_HISTORY_TTL_DAYS = 14;   // auto-purge notif > 14 hari
 
 // Default notification settings (per device, di localStorage)
 const DEFAULT_NOTIF_SETTINGS = {
@@ -2765,7 +2770,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -2893,14 +2898,105 @@ function showNotif(title, body, opts = {}) {
   showAppNotif(title, body, opts);
 }
 
+/* =============================================================
+   v2.51 — NOTIF HISTORY (localStorage)
+   ============================================================= */
+function getNotifHistory() {
+  try {
+    const raw = localStorage.getItem(LS_KEYS.NOTIF_HISTORY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    // Auto-purge: remove items older than TTL
+    const cutoff = Date.now() - (NOTIF_HISTORY_TTL_DAYS * 86400000);
+    return arr.filter(n => n && typeof n.ts === 'number' && n.ts >= cutoff);
+  } catch (e) { return []; }
+}
+function saveNotifHistory(arr) {
+  try { localStorage.setItem(LS_KEYS.NOTIF_HISTORY, JSON.stringify(arr.slice(0, NOTIF_HISTORY_MAX))); }
+  catch (e) { console.warn('Save notif history failed:', e); }
+}
+function addNotifToHistory(item) {
+  const arr = getNotifHistory();
+  // Prepend (latest first)
+  arr.unshift({
+    id: 'nh-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    ts: Date.now(),
+    title: item.title || '',
+    body: item.body || '',
+    icon: item.icon || '🔔',
+    type: item.type || 'default',
+    read: false,
+    action: item.action || null, // { kind: 'task'|'view', taskId?, view? }
+  });
+  saveNotifHistory(arr);
+  // Update sidebar badge
+  if (typeof updateNotifBadge === 'function') updateNotifBadge();
+}
+function markNotifRead(id) {
+  const arr = getNotifHistory();
+  const it = arr.find(n => n.id === id);
+  if (it) { it.read = true; saveNotifHistory(arr); }
+  if (typeof updateNotifBadge === 'function') updateNotifBadge();
+}
+function markAllNotifRead() {
+  const arr = getNotifHistory();
+  arr.forEach(n => n.read = true);
+  saveNotifHistory(arr);
+  if (typeof updateNotifBadge === 'function') updateNotifBadge();
+}
+function clearNotifHistory() {
+  saveNotifHistory([]);
+  if (typeof updateNotifBadge === 'function') updateNotifBadge();
+}
+function getUnreadNotifCount() {
+  return getNotifHistory().filter(n => !n.read).length;
+}
+function updateNotifBadge() {
+  const btn = document.querySelector('[data-nav="notifs"]');
+  if (!btn) return;
+  let badge = btn.querySelector('.sidebar-nav-badge');
+  const n = getUnreadNotifCount();
+  if (n > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'sidebar-nav-badge';
+      badge.style.background = '#f59e0b';
+      btn.appendChild(badge);
+    }
+    badge.textContent = n > 99 ? '99+' : String(n);
+  } else if (badge) {
+    badge.remove();
+  }
+}
+// Execute action saat user klik history item
+function executeNotifAction(action) {
+  if (!action) return;
+  closeModal && closeModal();
+  if (action.kind === 'task' && action.taskId) {
+    const t = STATE.tasks.find(x => x.id === action.taskId);
+    if (t && typeof openTaskModal === 'function') { openTaskModal(t); return; }
+    toast('Tugas tidak ditemukan (mungkin sudah dihapus)', 'error');
+  } else if (action.kind === 'view' && action.view) {
+    STATE.currentView = action.view;
+    renderMain();
+  }
+}
+
 // In-app notification (custom UI banner kanan atas)
 let _appNotifCount = 0;
 function showAppNotif(title, body, opts = {}) {
   const root = document.getElementById('app-notif-root');
-  if (!root) return;
-  const id = 'an-' + (++_appNotifCount);
   const type = opts.type || 'default';
   const icon = opts.icon || (type === 'new' ? '🆕' : type === 'start' ? '⏰' : type === 'daily' ? '📋' : '🔔');
+
+  // v2.51 — record ke notif history (selalu, walau opts.skipHistory true bisa di-skip mis. untuk Test Notif)
+  if (!opts.skipHistory) {
+    addNotifToHistory({ title, body, icon, type, action: opts.action || null });
+  }
+
+  if (!root) return;
+  const id = 'an-' + (++_appNotifCount);
   const now = new Date();
   const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
@@ -3085,6 +3181,7 @@ function checkRemindersTick() {
             tag: `daily-${today}`,
             persist: true,
             type: 'daily',
+            action: { kind: 'view', view: 'kanban' },
             onClick: () => {
               STATE.currentView = 'kanban';
               renderMain();
@@ -3125,6 +3222,7 @@ function checkRemindersTick() {
         {
           tag: `start-${task.id}`,
           type: 'start',
+          action: { kind: 'task', taskId: taskId },
           onClick: () => openTaskModal(taskId),
         }
       );
@@ -3162,6 +3260,7 @@ function handleNewTaskNotif(taskDoc) {
   showNotif(title, `${creator}: "${t.title}"`, {
     tag: `new-${t.id}`,
     type: 'new',
+    action: { kind: 'task', taskId: taskId },
     onClick: () => openTaskModal(taskId),
   });
   playNotifSound();
@@ -3186,6 +3285,7 @@ function handleNotCompletedNotif(task) {
     tag: `notdone-${task.id}`,
     type: 'start', // warna oranye/merah biar prominent
     icon: '🚫',
+    action: { kind: 'view', view: 'notdone' },
     onClick: () => {
       STATE.currentView = 'notdone';
       renderMain();
@@ -6016,6 +6116,7 @@ function catatanCheckTick() {
         tag: `reminder-${r.id}`,
         type: 'start',
         icon: '📌',
+        action: { kind: 'view', view: 'catatan' },
         onClick: () => { STATE.currentView = 'catatan'; renderMain(); },
       });
     }
@@ -8359,8 +8460,17 @@ function renderMain() {
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
           </button>
-          <button class="sidebar-nav-item" data-nav="notifs">
+          <button class="sidebar-nav-item ${STATE.currentView === 'notifs' ? 'active' : ''}" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
+            ${(() => {
+              // v2.51 — badge unread count
+              try {
+                const arr = JSON.parse(localStorage.getItem(LS_KEYS.NOTIF_HISTORY) || '[]');
+                const cutoff = Date.now() - (NOTIF_HISTORY_TTL_DAYS * 86400000);
+                const n = arr.filter(x => x && typeof x.ts === 'number' && x.ts >= cutoff && !x.read).length;
+                return n > 0 ? `<span class="sidebar-nav-badge" style="background:#f59e0b">${n > 99 ? '99+' : n}</span>` : '';
+              } catch(e) { return ''; }
+            })()}
           </button>
           <button class="sidebar-nav-item" data-nav="export">
             <span class="sidebar-nav-icon">📊</span>Export Data
@@ -8413,7 +8523,9 @@ function renderMain() {
                       ? renderCatatanPageHtml()
                       : (STATE.currentView === 'berkas'
                         ? renderBerkasPageHtml()
-                        : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))))}
+                        : (STATE.currentView === 'notifs'
+                          ? renderNotifPageHtml()
+                          : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml))))))))}
         </div>
       </main>
       <!-- v2.26: Floating Chat Button + Panel -->
@@ -8483,10 +8595,13 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // v2.26-v2.48: View switches (tambah 'dashboard' + 'catatan' + 'berkas')
-      if (target === 'dashboard' || target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja' || target === 'catatan' || target === 'berkas') {
+      // v2.26-v2.51: View switches (tambah 'dashboard' + 'catatan' + 'berkas' + 'notifs')
+      if (target === 'dashboard' || target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja' || target === 'catatan' || target === 'berkas' || target === 'notifs') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
+          renderMain();
+        } else if (target === 'notifs') {
+          // Re-click notifs while already on page: ensure latest
           renderMain();
         }
         return;
@@ -8499,7 +8614,6 @@ function renderMain() {
         case 'templates': openTemplatesModal(); break;
         case 'export': openExportModal(); break;
         case 'share': openShareKitModal(); break;
-        case 'notifs': openNotifSettingsModal(); break;
       }
     });
   });
@@ -8536,6 +8650,12 @@ function renderMain() {
   if (STATE.currentView === 'berkas') {
     bindBerkasPage();
   }
+  // v2.51: Notifikasi page (Riwayat + Pengaturan)
+  if (STATE.currentView === 'notifs') {
+    bindNotifPage();
+  }
+  // v2.51: refresh badge unread di sidebar after render
+  updateNotifBadge();
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', () => {
@@ -11386,7 +11506,270 @@ function openTemplateEditor(tplId) {
 }
 
 /* =============================================================
-   NOTIFICATION SETTINGS MODAL
+   v2.51 — NOTIFIKASI PAGE (Riwayat + Pengaturan)
+   ============================================================= */
+let _notifPageTab = 'history'; // 'history' | 'settings'
+
+function renderNotifPageHtml() {
+  const hist = getNotifHistory();
+  const unread = hist.filter(n => !n.read).length;
+  const tabBtn = (id, label, badge) => `
+    <button class="notif-tab ${_notifPageTab === id ? 'active' : ''}" data-notif-tab="${id}"
+      style="flex:1;padding:10px 16px;background:${_notifPageTab === id ? 'var(--primary)' : 'transparent'};
+      color:${_notifPageTab === id ? '#fff' : 'var(--text)'};border:1px solid var(--border);
+      border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px">
+      ${label}
+      ${badge ? `<span style="background:${_notifPageTab === id ? 'rgba(255,255,255,.25)' : '#f59e0b'};color:#fff;padding:1px 7px;border-radius:10px;font-size:11px">${badge}</span>` : ''}
+    </button>
+  `;
+  return `
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div>
+        <h1 class="page-title">🔔 Notifikasi</h1>
+        <p class="page-subtitle">Riwayat notifikasi yang pernah muncul dan pengaturan notif.</p>
+      </div>
+      ${_notifPageTab === 'history' && hist.length > 0 ? `
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${unread > 0 ? `<button class="btn btn-secondary btn-sm" id="notif-mark-all-read">✅ Tandai Semua Dibaca</button>` : ''}
+          <button class="btn btn-danger btn-sm" id="notif-clear-all">🗑️ Hapus Semua</button>
+        </div>
+      ` : ''}
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      ${tabBtn('history', '📜 Riwayat', unread || '')}
+      ${tabBtn('settings', '⚙️ Pengaturan', '')}
+    </div>
+    <div id="notif-page-body">
+      ${_notifPageTab === 'history' ? renderNotifHistoryList(hist) : renderNotifSettingsForm()}
+    </div>
+  `;
+}
+
+function renderNotifHistoryList(hist) {
+  if (!hist || hist.length === 0) {
+    return `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-muted);background:var(--bg-col);border-radius:var(--radius)">
+        <div style="font-size:48px;margin-bottom:10px">🔕</div>
+        <div style="font-weight:600;margin-bottom:6px">Belum ada notifikasi</div>
+        <div style="font-size:13px">Notifikasi yang muncul (tugas baru, jam mulai, reminder catatan, dll) akan tersimpan di sini supaya gak terlewat.</div>
+        <div style="font-size:11px;margin-top:10px;color:var(--text-muted);font-style:italic">Catatan: riwayat tersimpan per device (browser) selama maks ${NOTIF_HISTORY_TTL_DAYS} hari.</div>
+      </div>
+    `;
+  }
+  // Group by tanggal
+  const groups = {};
+  hist.forEach(n => {
+    const d = new Date(n.ts);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(n);
+  });
+  const today = todayStr();
+  const yesterday = (() => { const d = new Date(); d.setDate(d.getDate()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+  const formatGroupLabel = (key) => {
+    if (key === today) return 'Hari Ini';
+    if (key === yesterday) return 'Kemarin';
+    const d = new Date(key);
+    return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  };
+  let html = '';
+  Object.keys(groups).sort((a,b) => b.localeCompare(a)).forEach(key => {
+    html += `<div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;padding:0 4px">${formatGroupLabel(key)} <span style="color:var(--text-light);font-weight:400;text-transform:none">(${groups[key].length})</span></div>
+      ${groups[key].map(n => renderNotifHistoryItem(n)).join('')}
+    </div>`;
+  });
+  return html;
+}
+
+function renderNotifHistoryItem(n) {
+  const d = new Date(n.ts);
+  const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const unreadStyle = n.read ? '' : 'background:#fef3c7;border-left:3px solid #f59e0b';
+  const clickable = !!n.action;
+  return `
+    <div class="notif-history-item" data-notif-id="${n.id}" ${clickable ? 'data-clickable="1"' : ''}
+      style="display:flex;gap:12px;padding:12px 14px;background:var(--bg-col);border-radius:8px;margin-bottom:6px;${unreadStyle};${clickable ? 'cursor:pointer' : ''}">
+      <div style="font-size:24px;flex-shrink:0;line-height:1.2">${n.icon || '🔔'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:3px">
+          <div style="font-weight:600;font-size:13.5px;color:var(--text)">${escapeHtml(n.title || '')}</div>
+          <div style="font-size:11px;color:var(--text-muted);flex-shrink:0">${timeStr}${!n.read ? ' <span style="color:#f59e0b;font-weight:700">●</span>' : ''}</div>
+        </div>
+        <div style="font-size:12.5px;color:var(--text-muted);line-height:1.4;word-break:break-word">${escapeHtml(n.body || '')}</div>
+        ${clickable ? `<div style="font-size:11px;color:var(--primary);margin-top:4px">→ Klik untuk buka</div>` : ''}
+      </div>
+      <button class="notif-history-del" data-notif-del="${n.id}" title="Hapus"
+        style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;padding:0 4px;align-self:flex-start">×</button>
+    </div>
+  `;
+}
+
+function renderNotifSettingsForm() {
+  const s = STATE.notifSettings || { ...DEFAULT_NOTIF_SETTINGS };
+  const permStatus = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const permLabel = {
+    'granted': '✅ Diizinkan',
+    'denied': '❌ Diblokir (buka settings browser untuk aktifkan)',
+    'default': '⚠️ Belum di-request',
+    'unsupported': '❌ Browser tidak support',
+  };
+  return `
+    <div style="background:var(--bg-col);padding:14px;border-radius:var(--radius)">
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:14px">
+        Pengaturan tersimpan per device (browser kamu). Cara kerja: Team Tracker harus dibuka (tab aktif/background) untuk notif muncul.
+      </p>
+      <div style="padding:10px 14px;background:#fff;border-radius:var(--radius);margin-bottom:14px;font-size:12px;border:1px solid var(--border)">
+        <strong>Status Izin Notif Browser:</strong> ${permLabel[permStatus] || permStatus}
+        ${permStatus === 'default' ? '<div style="margin-top:6px"><button class="btn btn-primary btn-sm" id="ns-req-perm">Minta Izin Sekarang</button></div>' : ''}
+      </div>
+      <div style="padding:12px 14px;background:#fff;border-radius:var(--radius);margin-bottom:10px;border:1px solid var(--border)">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+          <input type="checkbox" id="ns-enabled" ${s.enabled ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          Aktifkan Notifikasi
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Master switch — kalau off semua notif disabled</div>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-sound" ${s.soundEnabled ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          🔊 Mainkan suara saat notif tugas (3 detik)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Buat notif tugas baru / start time / reminder harian</div>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-chat-sound" ${s.chatSoundEnabled !== false ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          💬 Mainkan suara saat chat baru (pendek, ~0.5 detik)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px">Ding-dong pendek tapi tetap keras</div>
+      </div>
+      <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-new-task" ${s.notifyOnNewTask ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          🆕 Notif kalau ada tugas baru ditambah ke saya (atau ke tim, kalau admin)
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-start-time" ${s.notifyOnStartTime ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          ⏰ Notif saat jam mulai tugas tiba
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ns-daily" ${s.notifyDailyReminder ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer">
+          📋 Reminder harian (jam yang dipilih)
+        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:24px;margin-bottom:8px">Tiap hari di jam yang kamu set, kalau masih ada tugas belum selesai, akan notif</div>
+        <div style="padding-left:24px">
+          <input type="time" id="ns-reminder-time" class="input" value="${s.reminderTime}" style="width:auto;padding:6px 10px;font-size:14px">
+        </div>
+      </div>
+      <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <button class="btn btn-secondary btn-sm" id="ns-test">🧪 Test Notif Tugas</button>
+        <button class="btn btn-secondary btn-sm" id="ns-test-chat">💬 Test Sound Chat</button>
+      </div>
+      <button class="btn btn-primary" id="ns-save" style="width:100%">💾 Simpan Pengaturan</button>
+    </div>
+  `;
+}
+
+function bindNotifPage() {
+  // Tab switching
+  document.querySelectorAll('[data-notif-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _notifPageTab = btn.dataset.notifTab;
+      renderMain();
+    });
+  });
+  // History actions
+  if (_notifPageTab === 'history') {
+    document.getElementById('notif-mark-all-read')?.addEventListener('click', () => {
+      markAllNotifRead();
+      toast('Semua notifikasi ditandai dibaca', 'success');
+      renderMain();
+    });
+    document.getElementById('notif-clear-all')?.addEventListener('click', () => {
+      if (!confirm('Hapus semua riwayat notifikasi?')) return;
+      clearNotifHistory();
+      toast('Riwayat notifikasi dihapus', 'success');
+      renderMain();
+    });
+    document.querySelectorAll('.notif-history-item[data-clickable="1"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('[data-notif-del]')) return;
+        const id = el.dataset.notifId;
+        markNotifRead(id);
+        const hist = getNotifHistory();
+        const item = hist.find(n => n.id === id);
+        if (item && item.action) executeNotifAction(item.action);
+      });
+    });
+    document.querySelectorAll('[data-notif-del]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.notifDel;
+        const arr = getNotifHistory().filter(n => n.id !== id);
+        saveNotifHistory(arr);
+        updateNotifBadge();
+        renderMain();
+      });
+    });
+    // Auto-mark all sebagai read saat user buka tab Riwayat (after small delay)
+    setTimeout(() => { if (_notifPageTab === 'history') markAllNotifRead(); }, 1500);
+  }
+  // Settings actions
+  if (_notifPageTab === 'settings') {
+    document.getElementById('ns-req-perm')?.addEventListener('click', async () => {
+      const ok = await requestNotifPermission();
+      if (ok) { toast('Izin notif diberikan', 'success'); renderMain(); }
+      else toast('Izin notif ditolak', 'error');
+    });
+    document.getElementById('ns-test')?.addEventListener('click', async () => {
+      if ('Notification' in window && Notification.permission !== 'granted') {
+        await requestNotifPermission();
+      }
+      showNotif('🔔 Tes Notifikasi', 'Notifikasi Team Tracker bekerja!', { tag: 'test-notif', type: 'default', skipHistory: true });
+      const oldEnabled = STATE.notifSettings?.enabled;
+      const oldSound = STATE.notifSettings?.soundEnabled;
+      if (STATE.notifSettings) { STATE.notifSettings.enabled = true; STATE.notifSettings.soundEnabled = true; }
+      playNotifSound();
+      if (STATE.notifSettings) { STATE.notifSettings.enabled = oldEnabled; STATE.notifSettings.soundEnabled = oldSound; }
+    });
+    document.getElementById('ns-test-chat')?.addEventListener('click', () => {
+      showAppNotif('💬 Tes Sound Chat', 'Ding-dong!', { type: 'default', icon: '💬', skipHistory: true });
+      const oldEnabled = STATE.notifSettings?.enabled;
+      const oldChat = STATE.notifSettings?.chatSoundEnabled;
+      if (STATE.notifSettings) { STATE.notifSettings.enabled = true; STATE.notifSettings.chatSoundEnabled = true; }
+      playChatSound();
+      if (STATE.notifSettings) { STATE.notifSettings.enabled = oldEnabled; STATE.notifSettings.chatSoundEnabled = oldChat; }
+    });
+    document.getElementById('ns-save')?.addEventListener('click', async () => {
+      const enabled = document.getElementById('ns-enabled').checked;
+      if (enabled && Notification.permission !== 'granted') {
+        const ok = await requestNotifPermission();
+        if (!ok) { toast('Notif gak bisa di-aktifkan tanpa izin browser', 'error'); return; }
+      }
+      const newSettings = {
+        enabled,
+        soundEnabled: document.getElementById('ns-sound').checked,
+        chatSoundEnabled: document.getElementById('ns-chat-sound').checked,
+        notifyOnNewTask: document.getElementById('ns-new-task').checked,
+        notifyOnStartTime: document.getElementById('ns-start-time').checked,
+        notifyDailyReminder: document.getElementById('ns-daily').checked,
+        reminderTime: document.getElementById('ns-reminder-time').value || '09:00',
+      };
+      saveNotifSettings(newSettings);
+      toast('Pengaturan tersimpan', 'success');
+    });
+  }
+}
+
+/* =============================================================
+   NOTIFICATION SETTINGS MODAL (DEPRECATED v2.51 — page sekarang)
    ============================================================= */
 function openNotifSettingsModal() {
   const s = STATE.notifSettings || { ...DEFAULT_NOTIF_SETTINGS };
@@ -11498,7 +11881,7 @@ function openNotifSettingsModal() {
     showNotif(
       '🔔 Tes Notifikasi',
       'Notifikasi Team Tracker bekerja! Suara berbunyi sekitar 3 detik. Klik notifikasi ini untuk close.',
-      { tag: 'test-notif', type: 'default' }
+      { tag: 'test-notif', type: 'default', skipHistory: true }
     );
     // Force play sound walaupun belum di-enable di settings (untuk test)
     const oldEnabled = STATE.notifSettings?.enabled;
@@ -11519,7 +11902,7 @@ function openNotifSettingsModal() {
     showAppNotif(
       '💬 Tes Sound Chat',
       'Ding-dong! Pendek tapi tetap keras.',
-      { type: 'default', icon: '💬' }
+      { type: 'default', icon: '💬', skipHistory: true }
     );
     const oldEnabled = STATE.notifSettings?.enabled;
     const oldChat = STATE.notifSettings?.chatSoundEnabled;
