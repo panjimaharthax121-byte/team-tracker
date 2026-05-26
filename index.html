@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.47 — ApotekKu</title>
+<title>Team Tracker v2.49 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -2625,6 +2625,7 @@ import {
   getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, deleteDoc,
   onSnapshot, query, where, orderBy, limit, serverTimestamp, updateDoc, arrayUnion, arrayRemove
 } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+// v2.49: Berkas Penting sekarang LINK-BASED (Google Drive / Dropbox / dll) — Firebase Storage tidak dipakai lagi
 
 /* =============================================================
    STATE & STORAGE
@@ -2661,6 +2662,11 @@ const STATE = {
   dashboardCustomFrom: '',      // v2.47 — custom range from
   dashboardCustomTo: '',        // v2.47 — custom range to
   dashboardMember: null,        // v2.47 — null = semua tim, atau memberId untuk filter
+  reminders: [],                // v2.48 — catatan penting tim
+  files: [],                    // v2.48/v2.49 — berkas penting tim (link-based)
+  unsubReminders: null,         // v2.48
+  unsubFiles: null,             // v2.48
+  reminderNotifiedIds: new Set(),// v2.48 — cache reminder yg udah notif (avoid double notif sesi yg sama)
   messages: [],            // chat messages
   unsubMessages: null,
   lastChatReadAt: 0,       // timestamp ms (di-load dari localStorage)
@@ -3339,6 +3345,7 @@ async function bootstrap() {
     const app = initializeApp(cfg);
     STATE.auth = getAuth(app);
     STATE.db = getFirestore(app);
+    // v2.49: Firebase Storage tidak dipakai lagi — Berkas Penting sekarang link-based via Google Drive
     await signInAnonymously(STATE.auth);
     onAuthStateChanged(STATE.auth, (user) => {
       if (user) {
@@ -3448,6 +3455,10 @@ async function subscribeBoards() {
     subscribeTemplates();
     subscribeTasks();
     subscribeMessages();
+    // v2.48: subscribe reminders + files + start reminder notif scheduler
+    if (typeof subscribeReminders === 'function') subscribeReminders();
+    if (typeof subscribeFiles === 'function') subscribeFiles();
+    if (typeof startReminderScheduler === 'function') startReminderScheduler();
 
     // Re-render
     if (STATE.currentMember && STATE.boards.length > 0) renderMain();
@@ -5724,6 +5735,495 @@ function openDashboardDrillModal(kind, value) {
   });
 }
 
+/* =============================================================
+   v2.48: CATATAN PENTING (Reminders) + BERKAS PENTING (Files)
+   ============================================================= */
+
+// Subscribe collections — dipanggil saat init member
+function subscribeReminders() {
+  if (STATE.unsubReminders) STATE.unsubReminders();
+  const q = query(collection(STATE.db, 'reminders'), orderBy('dateTime', 'asc'), limit(200));
+  STATE.unsubReminders = onSnapshot(q, (snap) => {
+    STATE.reminders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (STATE.currentView === 'catatan') renderCatatanList();
+    // Refresh sidebar badge (count upcoming 24h)
+    renderMainSafe();
+  }, (err) => console.error('Reminders listener error', err));
+}
+
+function subscribeFiles() {
+  if (STATE.unsubFiles) STATE.unsubFiles();
+  const q = query(collection(STATE.db, 'importantFiles'), orderBy('uploadedAt', 'desc'), limit(200));
+  STATE.unsubFiles = onSnapshot(q, (snap) => {
+    STATE.files = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (STATE.currentView === 'berkas') renderBerkasList();
+  }, (err) => console.error('Files listener error', err));
+}
+
+// Helper safe re-render main (skip kalau lagi edit cell di kalkerja, dll)
+function renderMainSafe() {
+  if (STATE.currentView === 'kalkerja') {
+    const active = document.activeElement;
+    if (active && active.matches && active.matches('[data-kk-edit]')) return;
+  }
+  if (typeof renderMain === 'function') renderMain();
+}
+
+/* ===== CATATAN PENTING (Reminders) ===== */
+
+function renderCatatanPageHtml() {
+  const me = STATE.currentMember;
+  const canManage = !!me;
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">📌 Catatan Penting</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Tanggal & event penting tim — rapat, off promo, dll. Notif otomatis saat jatuh tempo.</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-primary" id="btn-add-reminder">+ Catatan Baru</button>
+      </div>
+    </div>
+
+    <!-- Banner info notif -->
+    <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;margin-bottom:16px;font-size:12.5px;color:#92400e;line-height:1.5">
+      💡 Catatan dengan tanggal & jam akan <strong>fire notif otomatis</strong> saat waktunya tiba (di-cek tiap menit). Pastikan notifikasi browser <strong>diizinkan</strong> di setting browser.
+    </div>
+
+    <div id="catatan-list-root"></div>
+  `;
+}
+
+function bindCatatanPage() {
+  const addBtn = document.getElementById('btn-add-reminder');
+  if (addBtn) addBtn.addEventListener('click', () => openReminderModal());
+  renderCatatanList();
+}
+
+function renderCatatanList() {
+  const root = document.getElementById('catatan-list-root');
+  if (!root) return;
+  const now = Date.now();
+  const reminders = (STATE.reminders || []).slice().sort((a, b) => {
+    const ta = reminderTime(a), tb = reminderTime(b);
+    return ta - tb;
+  });
+  const upcoming = reminders.filter(r => reminderTime(r) >= now);
+  const past = reminders.filter(r => reminderTime(r) < now);
+
+  if (reminders.length === 0) {
+    root.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:60px 20px;text-align:center;color:var(--text-muted)">
+        <div style="font-size:42px;margin-bottom:8px">📌</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">Belum ada catatan penting</div>
+        <div style="font-size:12px">Klik "+ Catatan Baru" untuk menambah tanggal/event penting.</div>
+      </div>
+    `;
+    return;
+  }
+
+  function renderItem(r) {
+    const dt = new Date(reminderTime(r));
+    const dayNames = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+    const monthsId = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    const dateLabel = `${dayNames[dt.getDay()]}, ${dt.getDate()} ${monthsId[dt.getMonth()]} ${dt.getFullYear()}`;
+    const timeLabel = r.time || (dt.getHours() > 0 || dt.getMinutes() > 0 ? `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}` : '');
+    const isPast = reminderTime(r) < now;
+    const inSoon = !isPast && reminderTime(r) - now <= 86400000; // <24 jam
+    const typeBadge = r.type ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:100px;background:${reminderTypeColor(r.type)}20;color:${reminderTypeColor(r.type)}">${escapeHtml(r.type.toUpperCase())}</span>` : '';
+    return `
+      <div style="background:white;border:1px solid var(--border);${inSoon ? 'border-left:4px solid #f59e0b' : ''}${isPast ? 'opacity:0.7;border-left:4px solid #9ca3af' : ''};border-radius:8px;padding:14px 16px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+              <strong style="font-size:14px;${isPast ? 'color:var(--text-muted)' : ''}">${escapeHtml(r.title || '(tanpa judul)')}</strong>
+              ${typeBadge}
+              ${inSoon ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:100px;background:#f59e0b;color:white">⚡ SEGERA</span>` : ''}
+              ${isPast ? `<span style="font-size:10px;color:var(--text-muted);font-style:italic">lampau</span>` : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:3px">📅 ${dateLabel}${timeLabel ? ` · ⏰ ${timeLabel}` : ''}</div>
+            ${r.description ? `<div style="font-size:12.5px;color:var(--text-muted);line-height:1.4;margin-top:4px">${escapeHtml(r.description)}</div>` : ''}
+            <div style="font-size:10.5px;color:var(--text-muted);margin-top:6px">Dibuat oleh ${escapeHtml(r.createdByName || '?')}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" data-reminder-edit="${r.id}">✏️ Edit</button>
+            <button class="btn btn-ghost btn-sm" data-reminder-del="${r.id}" style="color:#dc2626">🗑️ Hapus</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  root.innerHTML = `
+    ${upcoming.length > 0 ? `
+      <h2 style="font-size:14px;font-weight:700;margin:0 0 10px;color:#0891b2">⏭️ Mendatang (${upcoming.length})</h2>
+      ${upcoming.map(renderItem).join('')}
+      <div style="height:18px"></div>
+    ` : ''}
+    ${past.length > 0 ? `
+      <h2 style="font-size:14px;font-weight:700;margin:0 0 10px;color:var(--text-muted)">📜 Lampau (${past.length})</h2>
+      ${past.slice(0, 30).map(renderItem).join('')}
+      ${past.length > 30 ? `<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:10px">+${past.length - 30} catatan lampau lainnya tidak ditampilkan</div>` : ''}
+    ` : ''}
+  `;
+
+  // Bind delete & edit
+  root.querySelectorAll('[data-reminder-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.reminderDel;
+      const r = STATE.reminders.find(x => x.id === id);
+      if (!r) return;
+      if (!confirm(`Hapus catatan "${r.title}"?`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'reminders', id));
+        toast('Catatan dihapus', 'success');
+      } catch (err) { toast('Gagal hapus: ' + err.message, 'error'); }
+    });
+  });
+  root.querySelectorAll('[data-reminder-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.reminderEdit;
+      const r = STATE.reminders.find(x => x.id === id);
+      if (r) openReminderModal(r);
+    });
+  });
+}
+
+function reminderTime(r) {
+  if (!r) return 0;
+  if (typeof r.dateTime === 'number') return r.dateTime;
+  if (r.dateTime?.toMillis) return r.dateTime.toMillis();
+  if (r.dateTime?.seconds) return r.dateTime.seconds * 1000;
+  // Fallback: combine r.date + r.time
+  if (r.date) {
+    const t = r.time || '09:00';
+    return new Date(r.date + 'T' + t + ':00').getTime();
+  }
+  return 0;
+}
+
+function reminderTypeColor(type) {
+  const map = {
+    rapat: '#7c3aed',
+    shopee: '#ea580c',
+    grab: '#16a34a',
+    halodoc: '#dc2626',
+    promo: '#f59e0b',
+    libur: '#3b82f6',
+    lainnya: '#6b7280',
+  };
+  return map[(type || '').toLowerCase()] || '#6b7280';
+}
+
+function openReminderModal(existing) {
+  const me = STATE.currentMember;
+  if (!me) return;
+  const isEdit = !!existing;
+  const r = existing || {};
+  const dt = isEdit ? new Date(reminderTime(r)) : new Date();
+  const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  const timeStr = isEdit && r.time ? r.time : (isEdit ? `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}` : '09:00');
+  const types = ['rapat','shopee','grab','halodoc','promo','libur','lainnya'];
+  const typeOpts = types.map(t => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('');
+
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">${isEdit ? '✏️ Edit Catatan' : '+ Catatan Penting Baru'}</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+      <div class="form-group">
+        <label class="label">Judul / Event <span style="color:#dc2626">*</span></label>
+        <input type="text" id="r-title" class="input" placeholder="Mis: Rapat dengan Direktur, Off Flashsale Shopee" value="${escapeHtml(r.title || '')}" autofocus>
+      </div>
+      <div class="form-row" style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:160px">
+          <label class="label">Tanggal <span style="color:#dc2626">*</span></label>
+          <input type="date" id="r-date" class="input" value="${dateStr}">
+        </div>
+        <div class="form-group" style="flex:1;min-width:120px">
+          <label class="label">Jam (opsional)</label>
+          <input type="time" id="r-time" class="input" value="${timeStr}">
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label class="label">Tipe</label>
+          <select id="r-type" class="select">${typeOpts}</select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="label">Keterangan (opsional)</label>
+        <textarea id="r-desc" class="textarea" rows="3" placeholder="Detail tambahan...">${escapeHtml(r.description || '')}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="r-save">${isEdit ? 'Update' : 'Simpan'}</button>
+    </div>
+  `;
+  showModal(html, { size: 'md' });
+  document.getElementById('r-save').addEventListener('click', async () => {
+    const title = document.getElementById('r-title').value.trim();
+    const date = document.getElementById('r-date').value;
+    const time = document.getElementById('r-time').value || '09:00';
+    const type = document.getElementById('r-type').value;
+    const desc = document.getElementById('r-desc').value.trim();
+    if (!title) { toast('Judul wajib', 'error'); return; }
+    if (!date) { toast('Tanggal wajib', 'error'); return; }
+    const dateTime = new Date(date + 'T' + time + ':00').getTime();
+    const data = {
+      title, date, time, type, description: desc, dateTime,
+      updatedAt: serverTimestamp(),
+    };
+    try {
+      if (isEdit) {
+        await updateDoc(doc(STATE.db, 'reminders', existing.id), data);
+        toast('Catatan diupdate', 'success');
+      } else {
+        data.createdById = me.id;
+        data.createdByName = me.name;
+        data.createdAt = serverTimestamp();
+        await addDoc(collection(STATE.db, 'reminders'), data);
+        toast('Catatan disimpan', 'success');
+      }
+      closeModal();
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  });
+}
+
+// v2.48: Catatan Penting notif scheduler — cek tiap 60 detik (terpisah dari _reminderTimer task notif yg existing)
+let _catatanTimer = null;
+function startReminderScheduler() {
+  if (_catatanTimer) return; // sudah jalan
+  _catatanTimer = setInterval(catatanCheckTick, 60 * 1000); // 1 menit
+  setTimeout(catatanCheckTick, 5000);
+}
+function catatanCheckTick() {
+  if (!STATE.currentMember) return;
+  const now = Date.now();
+  const windowMs = 65 * 1000; // 65 detik window biar gak miss event
+  (STATE.reminders || []).forEach(r => {
+    const t = reminderTime(r);
+    if (!t) return;
+    // Fire kalau t dalam range [now - window/2, now + window/2]
+    if (Math.abs(t - now) > windowMs / 2) return;
+    if (STATE.reminderNotifiedIds.has(r.id)) return; // sudah notif
+    STATE.reminderNotifiedIds.add(r.id);
+    // Fire notif
+    const title = `📌 ${r.title || 'Catatan Penting'}`;
+    const body = r.description || `${r.date || ''}${r.time ? ' · ' + r.time : ''}`;
+    if (typeof showNotif === 'function') {
+      showNotif(title, body, {
+        tag: `reminder-${r.id}`,
+        type: 'start',
+        icon: '📌',
+        onClick: () => { STATE.currentView = 'catatan'; renderMain(); },
+      });
+    }
+    if (typeof playNotifSound === 'function') playNotifSound();
+  });
+}
+
+/* ===== BERKAS PENTING (Files) ===== */
+
+// v2.49: Berkas Penting LINK-BASED — simpan link Google Drive / Dropbox / URL apa pun.
+// Gak butuh Firebase Storage (gratis tanpa Blaze plan). Team Tracker jadi katalog/index berkas.
+
+function berkasDetectType(url) {
+  const u = (url || '').toLowerCase();
+  if (u.includes('docs.google.com/spreadsheets')) return { ext: 'gsheets', icon: '📊', label: 'Google Sheets' };
+  if (u.includes('docs.google.com/document')) return { ext: 'gdocs', icon: '📘', label: 'Google Docs' };
+  if (u.includes('docs.google.com/presentation')) return { ext: 'gslides', icon: '📙', label: 'Google Slides' };
+  if (u.includes('docs.google.com/forms')) return { ext: 'gforms', icon: '📋', label: 'Google Forms' };
+  if (/\.xlsx?(\?|$)/.test(u) || /\.csv(\?|$)/.test(u)) return { ext: 'xlsx', icon: '📊', label: 'Excel' };
+  if (/\.pdf(\?|$)/.test(u)) return { ext: 'pdf', icon: '📕', label: 'PDF' };
+  if (/\.docx?(\?|$)/.test(u)) return { ext: 'docx', icon: '📘', label: 'Word' };
+  if (/\.pptx?(\?|$)/.test(u)) return { ext: 'pptx', icon: '📙', label: 'PowerPoint' };
+  if (/\.(png|jpg|jpeg|gif|webp)(\?|$)/.test(u)) return { ext: 'image', icon: '🖼️', label: 'Gambar' };
+  if (/\.zip(\?|$)/.test(u)) return { ext: 'zip', icon: '🗜️', label: 'ZIP' };
+  if (u.includes('drive.google.com')) return { ext: 'gdrive', icon: '📎', label: 'Google Drive' };
+  if (u.includes('dropbox.com')) return { ext: 'dropbox', icon: '📦', label: 'Dropbox' };
+  if (u.includes('onedrive.com') || u.includes('1drv.ms')) return { ext: 'onedrive', icon: '☁️', label: 'OneDrive' };
+  return { ext: 'link', icon: '🔗', label: 'Link' };
+}
+
+function isValidBerkasUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (e) { return false; }
+}
+
+function renderBerkasPageHtml() {
+  return `
+    <div class="page-title-row">
+      <div>
+        <h1 class="page-title">📎 Berkas Penting</h1>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Katalog link berkas penting (Google Drive, Sheets, Docs, PDF, dll). File tetap di Drive — sini cuma index supaya tim mudah cari berkas terakhir.</div>
+      </div>
+      <div class="page-toolbar">
+        <button class="btn btn-primary" id="btn-add-berkas">+ Tambah Berkas</button>
+      </div>
+    </div>
+
+    <div style="background:#f0f9ff;border-left:3px solid #0ea5e9;padding:10px 14px;border-radius:6px;margin-bottom:16px;font-size:12.5px;color:#075985;line-height:1.5">
+      💡 <strong>Cara pakai:</strong> Upload file ke Google Drive (gratis 15GB) → klik <strong>Share</strong> → copy link → klik <strong>+ Tambah Berkas</strong> di sini → paste link. Tipe auto-detect dari URL. Buka langsung di Drive untuk view/edit kolaboratif.
+    </div>
+
+    <div id="berkas-list-root"></div>
+  `;
+}
+
+function bindBerkasPage() {
+  const addBtn = document.getElementById('btn-add-berkas');
+  if (addBtn) addBtn.addEventListener('click', () => openBerkasModal());
+  renderBerkasList();
+}
+
+function renderBerkasList() {
+  const root = document.getElementById('berkas-list-root');
+  if (!root) return;
+  const files = STATE.files || [];
+  if (files.length === 0) {
+    root.innerHTML = `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:60px 20px;text-align:center;color:var(--text-muted)">
+        <div style="font-size:42px;margin-bottom:8px">📎</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">Belum ada berkas</div>
+        <div style="font-size:12px">Klik "+ Tambah Berkas" untuk paste link berkas Drive/Sheets/Docs/PDF.</div>
+      </div>
+    `;
+    return;
+  }
+  const rows = files.map(f => {
+    const t = berkasDetectType(f.url || '');
+    const icon = f.icon || t.icon;
+    const typeLabel = f.typeLabel || t.label;
+    const upDt = f.uploadedAt?.toDate ? f.uploadedAt.toDate() : (f.uploadedAt ? new Date(f.uploadedAt) : null);
+    const upStr = upDt ? upDt.toLocaleString('id-ID') : '?';
+    return `
+      <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="font-size:36px;flex-shrink:0">${icon}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:600;font-size:14px;margin-bottom:3px;word-break:break-word">${escapeHtml(f.name)}</div>
+          <div style="display:flex;gap:10px;font-size:11.5px;color:var(--text-muted);flex-wrap:wrap;align-items:center">
+            <span style="background:#f3f4f6;padding:2px 8px;border-radius:100px;font-weight:600">${escapeHtml(typeLabel)}</span>
+            <span>👤 ${escapeHtml(f.uploadedByName || '?')}</span>
+            <span>📅 ${escapeHtml(upStr)}</span>
+          </div>
+          ${f.description ? `<div style="font-size:11.5px;color:var(--text-muted);line-height:1.4;margin-top:4px">${escapeHtml(f.description)}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <a href="${escapeHtml(f.url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm">🔗 Buka</a>
+          <button class="btn btn-ghost btn-sm" data-berkas-edit="${f.id}">✏️</button>
+          <button class="btn btn-ghost btn-sm" data-berkas-del="${f.id}" style="color:#dc2626">🗑️</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  root.innerHTML = rows;
+  root.querySelectorAll('[data-berkas-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.berkasDel;
+      const f = STATE.files.find(x => x.id === id);
+      if (!f) return;
+      if (!confirm(`Hapus berkas "${f.name}"?\n\nNote: ini cuma hapus dari index Team Tracker — file asli di Google Drive tetap utuh.`)) return;
+      try {
+        await deleteDoc(doc(STATE.db, 'importantFiles', f.id));
+        toast('Berkas dihapus dari index', 'success');
+      } catch (err) { toast('Gagal hapus: ' + err.message, 'error'); }
+    });
+  });
+  root.querySelectorAll('[data-berkas-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.berkasEdit;
+      const f = STATE.files.find(x => x.id === id);
+      if (f) openBerkasModal(f);
+    });
+  });
+}
+
+function openBerkasModal(existing) {
+  const me = STATE.currentMember;
+  if (!me) return;
+  const isEdit = !!existing;
+  const f = existing || {};
+  const html = `
+    <div class="modal-header">
+      <h2 class="modal-title">${isEdit ? '✏️ Edit Berkas' : '+ Tambah Berkas Penting'}</h2>
+      <button class="modal-close" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+      ${!isEdit ? `
+        <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#92400e;line-height:1.5">
+          💡 <strong>Tip:</strong> di Google Drive, klik kanan file → <strong>Share</strong> → ubah ke "Anyone with the link" (atau spesifik ke email tim) → copy link → paste di bawah.
+        </div>
+      ` : ''}
+      <div class="form-group">
+        <label class="label">Nama Berkas <span style="color:#dc2626">*</span></label>
+        <input type="text" id="b-name" class="input" placeholder="Mis: Laporan B2C Mei 2026" value="${escapeHtml(f.name || '')}" autofocus>
+      </div>
+      <div class="form-group">
+        <label class="label">Link / URL Berkas <span style="color:#dc2626">*</span></label>
+        <input type="url" id="b-url" class="input" placeholder="https://docs.google.com/spreadsheets/d/..." value="${escapeHtml(f.url || '')}">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Tipe & icon akan auto-detect dari URL.</div>
+        <div id="b-preview-type" style="margin-top:8px;font-size:12px;color:var(--text-muted);display:none">
+          Tipe terdeteksi: <span id="b-preview-label" style="font-weight:600"></span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="label">Keterangan (opsional)</label>
+        <textarea id="b-desc" class="textarea" rows="3" placeholder="Catatan tambahan, mis: versi/periode/konteks">${escapeHtml(f.description || '')}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="b-save">${isEdit ? 'Update' : 'Simpan'}</button>
+    </div>
+  `;
+  showModal(html, { size: 'md' });
+  // Live preview tipe saat user paste URL
+  const urlInput = document.getElementById('b-url');
+  const previewBox = document.getElementById('b-preview-type');
+  const previewLabel = document.getElementById('b-preview-label');
+  function updatePreview() {
+    const u = urlInput.value.trim();
+    if (!u) { previewBox.style.display = 'none'; return; }
+    const t = berkasDetectType(u);
+    previewBox.style.display = 'block';
+    previewLabel.textContent = `${t.icon} ${t.label}`;
+  }
+  urlInput.addEventListener('input', updatePreview);
+  updatePreview();
+  // Save
+  document.getElementById('b-save').addEventListener('click', async () => {
+    const name = document.getElementById('b-name').value.trim();
+    const url = document.getElementById('b-url').value.trim();
+    const desc = document.getElementById('b-desc').value.trim();
+    if (!name) { toast('Nama berkas wajib', 'error'); return; }
+    if (!url) { toast('Link/URL wajib', 'error'); return; }
+    if (!isValidBerkasUrl(url)) { toast('URL tidak valid (harus http:// atau https://)', 'error'); return; }
+    const t = berkasDetectType(url);
+    const data = {
+      name, url, description: desc,
+      ext: t.ext, icon: t.icon, typeLabel: t.label,
+      updatedAt: serverTimestamp(),
+    };
+    try {
+      if (isEdit) {
+        await updateDoc(doc(STATE.db, 'importantFiles', existing.id), data);
+        toast('Berkas diupdate', 'success');
+      } else {
+        data.uploadedById = me.id;
+        data.uploadedByName = me.name;
+        data.uploadedAt = serverTimestamp();
+        await addDoc(collection(STATE.db, 'importantFiles'), data);
+        toast('Berkas ditambahkan', 'success');
+      }
+      closeModal();
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  });
+}
+
 function renderKalenderKerjaPageHtml() {
   const s = kalKerjaState();
   const monthsId = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -7842,6 +8342,23 @@ function renderMain() {
           <button class="sidebar-nav-item" data-nav="members">
             <span class="sidebar-nav-icon">👥</span>Data Pengguna
           </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'catatan' ? 'active' : ''}" data-nav="catatan">
+            <span class="sidebar-nav-icon">📌</span>Catatan Penting
+            ${(() => {
+              // Badge jumlah reminder upcoming dalam 24 jam
+              const now = Date.now();
+              const in24h = now + 86400000;
+              const upcoming = (STATE.reminders || []).filter(r => {
+                if (!r.dateTime) return false;
+                const t = typeof r.dateTime === 'number' ? r.dateTime : (r.dateTime.toMillis ? r.dateTime.toMillis() : 0);
+                return t >= now && t <= in24h;
+              }).length;
+              return upcoming > 0 ? `<span class="sidebar-nav-badge" style="background:#f59e0b">${upcoming}</span>` : '';
+            })()}
+          </button>
+          <button class="sidebar-nav-item ${STATE.currentView === 'berkas' ? 'active' : ''}" data-nav="berkas">
+            <span class="sidebar-nav-icon">📎</span>Berkas Penting
+          </button>
           <button class="sidebar-nav-item" data-nav="notifs">
             <span class="sidebar-nav-icon">🔔</span>Notifikasi
           </button>
@@ -7892,7 +8409,11 @@ function renderMain() {
                   ? renderNotDonePageHtml()
                   : (STATE.currentView === 'kalkerja'
                     ? renderKalenderKerjaPageHtml()
-                    : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))}
+                    : (STATE.currentView === 'catatan'
+                      ? renderCatatanPageHtml()
+                      : (STATE.currentView === 'berkas'
+                        ? renderBerkasPageHtml()
+                        : renderKanbanPageHtml(allChip, memberChips, labelFilterHtml)))))))}
         </div>
       </main>
       <!-- v2.26: Floating Chat Button + Panel -->
@@ -7962,8 +8483,8 @@ function renderMain() {
     btn.addEventListener('click', () => {
       closeSidebarMobile();
       const target = btn.dataset.nav;
-      // v2.26-v2.47: View switches (tambah 'dashboard')
-      if (target === 'dashboard' || target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja') {
+      // v2.26-v2.48: View switches (tambah 'dashboard' + 'catatan' + 'berkas')
+      if (target === 'dashboard' || target === 'kanban' || target === 'recap' || target === 'project' || target === 'notdone' || target === 'kalkerja' || target === 'catatan' || target === 'berkas') {
         if (STATE.currentView !== target) {
           STATE.currentView = target;
           renderMain();
@@ -8007,6 +8528,13 @@ function renderMain() {
   // v2.47: Dashboard
   if (STATE.currentView === 'dashboard') {
     bindDashboardPage();
+  }
+  // v2.48: Catatan Penting & Berkas Penting
+  if (STATE.currentView === 'catatan') {
+    bindCatatanPage();
+  }
+  if (STATE.currentView === 'berkas') {
+    bindBerkasPage();
   }
 
   // Logout
