@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.51 — ApotekKu</title>
+<title>Team Tracker v2.52 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -2949,7 +2949,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -12395,196 +12395,773 @@ function openShareKitModal() {
 /* =============================================================
    EXPORT MODAL
    ============================================================= */
+// v2.52 — Helper: compute total minutes worked dari timeLog sessions
+function computeWorkedMinutes(task, fromDate, toDate) {
+  const log = task?.timeLog || [];
+  if (!Array.isArray(log) || log.length === 0) return 0;
+  let total = 0;
+  log.forEach(s => {
+    if (!s || !s.startedAt) return;
+    const startMs = s.startedAt.toMillis ? s.startedAt.toMillis() : (typeof s.startedAt === 'number' ? s.startedAt : new Date(s.startedAt).getTime());
+    const endMs = s.endedAt
+      ? (s.endedAt.toMillis ? s.endedAt.toMillis() : (typeof s.endedAt === 'number' ? s.endedAt : new Date(s.endedAt).getTime()))
+      : Date.now();
+    if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) return;
+    // Optional clip ke range tanggal
+    if (fromDate || toDate) {
+      const startDateStr = new Date(startMs).toISOString().slice(0,10);
+      if (fromDate && startDateStr < fromDate) return;
+      if (toDate && startDateStr > toDate) return;
+    }
+    total += Math.round((endMs - startMs) / 60000);
+  });
+  return total;
+}
+
+function fmtMinutesAsHours(min) {
+  if (!min || min <= 0) return '';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}j`;
+  return `${h}j ${m}m`;
+}
+
 function openExportModal() {
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">Export Data untuk Analisa</div>
+      <div class="modal-title">📊 Export Data untuk Analisa</div>
       <button class="modal-close" data-close-modal>×</button>
     </div>
     <div class="modal-body">
       <p style="margin-bottom:14px;color:var(--text-muted);font-size:13px">
-        Export task dalam range tanggal tertentu — bisa kasih file-nya ke Claude untuk minta analisa
-        (mis: produktivitas per orang, status distribution, stuck tasks, dll).
+        Pilih data yang mau di-export. Format default Excel multi-sheet — cocok buat
+        kasih file ke Claude untuk minta analisa produktivitas, bottleneck, atau evaluasi tim.
       </p>
+
+      <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">📅 Range Tanggal</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="margin:0">
+            <label class="label">Dari</label>
+            <input type="date" id="exp-from" class="input" value="${shiftDate(todayStr(), -29)}">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="label">Sampai</label>
+            <input type="date" id="exp-to" class="input" value="${todayStr()}">
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn btn-ghost btn-sm" data-exp-range="7">7 hari</button>
+          <button class="btn btn-ghost btn-sm" data-exp-range="30">30 hari</button>
+          <button class="btn btn-ghost btn-sm" data-exp-range="90">3 bulan</button>
+          <button class="btn btn-ghost btn-sm" data-exp-range="month">Bulan ini</button>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">📦 Data yang Di-export</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-tasks" checked> 📋 Tugas (utama)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-notdone" checked> 🚫 Tugas Tidak Selesai
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-kalkerja"> 📋 Kalender Kerja
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-reminders"> 📌 Catatan Penting
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-files"> 📎 Berkas Penting
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-templates"> 📝 Template
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-summary" checked> 📊 Ringkasan Analitik
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="exp-include-deleted"> ♻️ Include task dihapus
+          </label>
+        </div>
+      </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-        <div class="form-group">
-          <label class="label">Dari Tanggal</label>
-          <input type="date" id="exp-from" class="input" value="${shiftDate(todayStr(), -6)}">
+        <div class="form-group" style="margin:0">
+          <label class="label">Filter Anggota</label>
+          <select id="exp-member" class="select">
+            <option value="">Semua anggota</option>
+            ${STATE.members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')}
+          </select>
         </div>
-        <div class="form-group">
-          <label class="label">Sampai Tanggal</label>
-          <input type="date" id="exp-to" class="input" value="${todayStr()}">
+        <div class="form-group" style="margin:0">
+          <label class="label">Filter Kategori</label>
+          <select id="exp-category" class="select">
+            <option value="">Semua kategori</option>
+            ${CATEGORIES.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+          </select>
         </div>
       </div>
+
       <div class="form-group">
-        <label class="label">Filter Anggota (opsional)</label>
-        <select id="exp-member" class="select">
-          <option value="">Semua anggota</option>
-          ${STATE.members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="label">Format</label>
+        <label class="label">Format Output</label>
         <select id="exp-format" class="select">
-          <option value="json">JSON (paling lengkap, buat dianalisa Claude)</option>
-          <option value="csv">CSV (buka di Excel)</option>
-          <option value="markdown">Markdown (laporan readable)</option>
+          <option value="xlsx">📊 Excel (.xlsx) — multi-sheet, paling enak buat tim</option>
+          <option value="json">JSON — paling lengkap, buat dianalisa Claude</option>
+          <option value="csv">CSV — buka di Excel/Sheets (1 sheet)</option>
+          <option value="markdown">Markdown — laporan readable</option>
         </select>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close-modal>Batal</button>
-      <button class="btn btn-primary" id="exp-go">Export & Download</button>
+      <button class="btn btn-primary" id="exp-go">⬇️ Export & Download</button>
     </div>
   `);
+
+  // Quick range buttons
+  document.querySelectorAll('[data-exp-range]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = btn.dataset.expRange;
+      const toEl = document.getElementById('exp-to');
+      const fromEl = document.getElementById('exp-from');
+      toEl.value = todayStr();
+      if (r === 'month') {
+        const d = new Date(); d.setDate(1);
+        fromEl.value = d.toISOString().slice(0, 10);
+      } else {
+        fromEl.value = shiftDate(todayStr(), -(parseInt(r, 10) - 1));
+      }
+    });
+  });
 
   document.getElementById('exp-go').addEventListener('click', async () => {
     const from = document.getElementById('exp-from').value;
     const to = document.getElementById('exp-to').value;
     const memberFilter = document.getElementById('exp-member').value;
+    const categoryFilter = document.getElementById('exp-category').value;
     const format = document.getElementById('exp-format').value;
+    const includeDeleted = document.getElementById('exp-include-deleted').checked;
+    const opts = {
+      tasks: document.getElementById('exp-tasks').checked,
+      notdone: document.getElementById('exp-notdone').checked,
+      kalkerja: document.getElementById('exp-kalkerja').checked,
+      reminders: document.getElementById('exp-reminders').checked,
+      files: document.getElementById('exp-files').checked,
+      templates: document.getElementById('exp-templates').checked,
+      summary: document.getElementById('exp-summary').checked,
+    };
     if (!from || !to) { toast('Tanggal wajib diisi', 'error'); return; }
     if (from > to) { toast('Tanggal "dari" harus sebelum "sampai"', 'error'); return; }
+    if (!opts.tasks && !opts.notdone && !opts.kalkerja && !opts.reminders && !opts.files && !opts.templates) {
+      toast('Pilih minimal 1 jenis data', 'error'); return;
+    }
+
+    const goBtn = document.getElementById('exp-go');
+    goBtn.disabled = true;
+    goBtn.textContent = 'Mengambil data...';
 
     try {
-      toast('Mengambil data...', '');
-      const tasksRef = collection(STATE.db, 'tasks');
-      const q = query(tasksRef, where('date', '>=', from), where('date', '<=', to));
-      const snap = await getDocs(q);
-      let tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (memberFilter) tasks = tasks.filter(t => t.assigneeId === memberFilter);
-      tasks.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
-
-      const filename = `team_tracker_${from}_to_${to}${memberFilter ? '_' + STATE.members.find(m => m.id === memberFilter)?.name : ''}.${format === 'markdown' ? 'md' : format}`;
-
-      let content = '';
-      if (format === 'json') {
-        content = JSON.stringify({
-          export_date: new Date().toISOString(),
-          range: { from, to },
-          member_filter: memberFilter || 'all',
-          members: STATE.members.map(m => ({ id: m.id, name: m.name, role: m.role })),
-          tasks: tasks.map(t => ({
-            id: t.id,
-            title: t.title,
-            description: t.description || '',
-            status: t.status,
-            progress: t.progress || 0,
-            target: t.target || 0,
-            progress_count: t.progressCount || 0,
-            date: t.date,
-            start_time: t.startTime || null,
-            end_time: t.endTime || null,
-            due_date: t.dueDate || null,
-            category: t.category || null,
-            labels: (t.labelIds || [])
-              .map(id => STATE.labels.find(l => l.id === id)?.name)
-              .filter(Boolean),
-            is_shared: !!t.isShared,
-            is_project: !!t.isProject,
-            from_template: t.fromTemplateName || null,
-            assignee: t.assigneeName,
-            created_by: t.createdByName,
-            created_at: tsToIso(t.createdAt),
-            updated_at: tsToIso(t.updatedAt),
-            completed_at: tsToIso(t.completedAt),
-            checklists: (t.checklists || []).map(cl => ({
-              title: cl.title || '',
-              items: (cl.items || []).map(it => ({ text: it.text, done: !!it.done })),
-            })),
-            comments: (t.comments || []).map(c => ({
-              author: c.authorName,
-              text: c.text,
-              at: c.createdAt,
-            })),
-            activity: (t.activity || []).map(a => ({
-              type: a.type, by: a.byName, at: a.at, from: a.from, to: a.to,
-            })),
-          })),
-        }, null, 2);
-      } else if (format === 'csv') {
-        const header = [
-          'Tanggal', 'Jam Mulai', 'Jam Selesai', 'Kategori', 'Judul', 'Deskripsi',
-          'Pelaksana', 'Status', 'Progress %', 'Target', 'Terlaksana',
-          'Label', 'Dari Template', 'Deadline',
-          'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai', 'Jumlah Comment',
-        ];
-        const rows = tasks.map(t => {
-          const cat = CATEGORIES.find(c => c.id === t.category);
-          const labels = (t.labelIds || [])
-            .map(id => STATE.labels.find(l => l.id === id)?.name)
-            .filter(Boolean).join(' · ');
-          return [
-            t.date,
-            t.startTime || '',
-            t.endTime || '',
-            cat ? cat.name : '',
-            t.title || '',
-            (t.description || '').replace(/[\r\n]+/g, ' '),
-            t.assigneeName || '',
-            (t.status || '').toUpperCase(),
-            `${t.progress || 0}%`,
-            t.target || '',
-            t.progressCount || '',
-            labels,
-            t.fromTemplateName || '',
-            t.dueDate || '',
-            t.createdByName || '',
-            tsToIso(t.createdAt),
-            tsToIso(t.updatedAt),
-            tsToIso(t.completedAt),
-            (t.comments || []).length,
-          ];
-        });
-        content = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
-      } else {
-        // markdown
-        content = `# Laporan Team Tracker\n\n**Periode:** ${from} s/d ${to}\n**Anggota:** ${memberFilter ? STATE.members.find(m => m.id === memberFilter)?.name : 'Semua tim'}\n**Total tugas:** ${tasks.length}\n\n`;
-        const byDate = {};
-        tasks.forEach(t => { (byDate[t.date] = byDate[t.date] || []).push(t); });
-        Object.keys(byDate).sort().forEach(d => {
-          content += `\n## ${d} (${dateLabel(d)})\n\n`;
-          byDate[d].forEach(t => {
-            const statusIcon = t.status === 'done' ? '[DONE]' : t.status === 'proses' ? '[PROSES]' : '[TODO]';
-            const cat = CATEGORIES.find(c => c.id === t.category);
-            const catStr = cat ? ` [${cat.name}]` : '';
-            const timeStr = (t.startTime || t.endTime) ? ` ⏰ ${t.startTime || '?'}${t.endTime ? '–' + t.endTime : ''}` : '';
-            const targetStr = (Number(t.target) || 0) > 0 ? ` (target ${t.progressCount || 0}/${t.target})` : '';
-            const progressStr = ` · ${t.progress || 0}%`;
-            content += `- ${statusIcon}${catStr} **${t.title}**${timeStr}${targetStr}${progressStr} — _${t.assigneeName}_\n`;
-            if (t.description) content += `  > ${t.description}\n`;
-            (t.comments || []).forEach(c => {
-              content += `  - 💬 ${c.authorName}: ${c.text}\n`;
-            });
-          });
-        });
-
-        // Summary
-        content += `\n## Ringkasan\n\n`;
-        const byStatus = {};
-        tasks.forEach(t => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
-        content += `**Status distribution:** ${Object.entries(byStatus).map(([k, v]) => `${k.toUpperCase()}: ${v}`).join(' · ')}\n\n`;
-        const byMember = {};
-        tasks.forEach(t => {
-          const k = t.assigneeName || '?';
-          byMember[k] = byMember[k] || { total: 0, done: 0 };
-          byMember[k].total++;
-          if (t.status === 'done') byMember[k].done++;
-        });
-        content += `**Per anggota:**\n`;
-        Object.entries(byMember).forEach(([k, v]) => {
-          content += `- ${k}: ${v.total} tugas (${v.done} done = ${Math.round(v.done/v.total*100)}%)\n`;
-        });
+      // Fetch tasks dalam range
+      let tasks = [];
+      let notdoneTasks = [];
+      if (opts.tasks || opts.notdone || opts.summary) {
+        const tasksRef = collection(STATE.db, 'tasks');
+        const q = query(tasksRef, where('date', '>=', from), where('date', '<=', to));
+        const snap = await getDocs(q);
+        tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Include juga task project yg overlap range tapi date-nya di luar
+        // (project task date = projectFrom biasanya)
+        if (memberFilter) tasks = tasks.filter(t => t.assigneeId === memberFilter || t.isShared);
+        if (categoryFilter) tasks = tasks.filter(t => t.category === categoryFilter);
+        if (!includeDeleted) tasks = tasks.filter(t => t.isDeleted !== true);
+        // Separate notdone
+        notdoneTasks = tasks.filter(t => t.notCompleted === true);
+        if (!opts.tasks) tasks = []; // user cuma minta notdone
+        tasks.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+        notdoneTasks.sort((a, b) => (b.notCompletedAt?.toMillis?.() || 0) - (a.notCompletedAt?.toMillis?.() || 0));
       }
 
-      downloadFile(filename, content, format === 'json' ? 'application/json' : format === 'csv' ? 'text/csv' : 'text/markdown');
-      toast(`Exported: ${tasks.length} tugas`, 'success');
+      // Fetch reminders
+      let reminders = [];
+      if (opts.reminders) {
+        const snap = await getDocs(collection(STATE.db, 'reminders'));
+        reminders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        reminders.sort((a, b) => (a.dateTime || 0) - (b.dateTime || 0));
+      }
+
+      // Fetch files
+      let files = [];
+      if (opts.files) {
+        const snap = await getDocs(collection(STATE.db, 'importantFiles'));
+        files = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        files.sort((a, b) => (b.uploadedAt?.toMillis?.() || 0) - (a.uploadedAt?.toMillis?.() || 0));
+      }
+
+      // Fetch templates
+      let templates = [];
+      if (opts.templates) {
+        const snap = await getDocs(collection(STATE.db, 'boards', STATE.currentBoardId, 'templates'));
+        templates = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        templates.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      }
+
+      // Fetch kalkerja overrides (per month in range)
+      let kalkerjaOverrides = {};
+      if (opts.kalkerja) {
+        const months = new Set();
+        let cur = from.slice(0, 7);
+        const end = to.slice(0, 7);
+        while (cur <= end) {
+          months.add(cur);
+          const [y, m] = cur.split('-').map(Number);
+          const next = new Date(y, m, 1); // m=1..12, this gives next month
+          cur = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+        }
+        for (const ym of months) {
+          try {
+            const docSnap = await getDoc(doc(STATE.db, 'monthlyCalendarOverrides', ym));
+            if (docSnap.exists()) kalkerjaOverrides[ym] = docSnap.data().overrides || {};
+          } catch (e) { /* skip */ }
+        }
+      }
+
+      const memberLabel = memberFilter ? STATE.members.find(m => m.id === memberFilter)?.name : 'Semua';
+      const ext = format === 'markdown' ? 'md' : format;
+      const safeName = (memberLabel || 'Semua').replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `team_tracker_${from}_to_${to}_${safeName}.${ext}`;
+
+      if (format === 'xlsx') {
+        await exportAsXlsx(filename, { tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberFilter, memberLabel, categoryFilter });
+      } else if (format === 'json') {
+        const content = JSON.stringify(buildExportObject({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberFilter, memberLabel, categoryFilter }), null, 2);
+        downloadFile(filename, content, 'application/json');
+      } else if (format === 'csv') {
+        const content = buildCsvContent(tasks, from, to);
+        downloadFile(filename, content, 'text/csv');
+      } else {
+        // markdown
+        const content = buildMarkdownReport({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberLabel, categoryFilter });
+        downloadFile(filename, content, 'text/markdown');
+      }
+
+      const totalRows = tasks.length + notdoneTasks.length + reminders.length + files.length + templates.length;
+      toast(`Export berhasil: ${totalRows} baris data`, 'success');
       closeModal();
     } catch (err) {
       toast('Gagal export: ' + err.message, 'error');
       console.error(err);
+      goBtn.disabled = false;
+      goBtn.textContent = '⬇️ Export & Download';
     }
   });
+}
+
+// v2.52 — Build full export object (untuk JSON & dasar XLSX)
+function buildExportObject(d) {
+  return {
+    export_meta: {
+      exported_at: new Date().toISOString(),
+      app_version: 'v2.52',
+      range: { from: d.from, to: d.to },
+      filter_member: d.memberLabel,
+      filter_category: d.categoryFilter || 'Semua',
+      total_tasks: d.tasks.length,
+      total_notdone: d.notdoneTasks.length,
+    },
+    members: STATE.members.map(m => ({
+      id: m.id, name: m.name, role: m.role,
+      hidden: m.hidden === true,
+    })),
+    categories: CATEGORIES.map(c => ({ id: c.id, name: c.name })),
+    labels: STATE.labels.map(l => ({ id: l.id, name: l.name, color: l.color, priority: l.priority })),
+    tasks: d.opts.tasks ? d.tasks.map(t => mapTaskForExport(t, d.from, d.to)) : undefined,
+    tasks_tidak_selesai: d.opts.notdone ? d.notdoneTasks.map(t => mapTaskForExport(t, d.from, d.to)) : undefined,
+    reminders: d.opts.reminders ? d.reminders.map(r => ({
+      id: r.id, title: r.title, type: r.type, date: r.date, time: r.time || null,
+      description: r.description || '',
+      created_by: r.createdByName,
+      created_at: tsToIso(r.createdAt),
+    })) : undefined,
+    important_files: d.opts.files ? d.files.map(f => ({
+      id: f.id, name: f.name, url: f.url, type_label: f.typeLabel, ext: f.ext,
+      description: f.description || '',
+      uploaded_by: f.uploadedBy,
+      uploaded_at: tsToIso(f.uploadedAt),
+    })) : undefined,
+    templates: d.opts.templates ? d.templates.map(t => ({
+      id: t.id, name: t.name, active: !!t.active,
+      default_assignee: STATE.members.find(m => m.id === t.defaultAssigneeId)?.name || null,
+      default_category: t.defaultCategoryId,
+      default_is_shared: !!t.defaultIsShared,
+      days_of_week: t.daysOfWeek || null,
+      items_count: (t.items || []).length,
+      items: (t.items || []).map(it => ({
+        title: it.title, startTime: it.startTime || null, endTime: it.endTime || null,
+        target: it.target || 0, description: it.description || '',
+      })),
+    })) : undefined,
+    kalkerja_overrides: d.opts.kalkerja ? d.kalkerjaOverrides : undefined,
+    summary: d.opts.summary ? buildSummaryStats(d.tasks, d.notdoneTasks) : undefined,
+  };
+}
+
+function mapTaskForExport(t, from, to) {
+  const worked = computeWorkedMinutes(t, from, to);
+  const cat = CATEGORIES.find(c => c.id === t.category);
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description || '',
+    status: t.status,
+    progress: t.progress || 0,
+    target: t.target || 0,
+    progress_count: t.progressCount || 0,
+    date: t.date,
+    start_time: t.startTime || null,
+    end_time: t.endTime || null,
+    due_date: t.dueDate || null,
+    category: cat ? cat.name : (t.category || null),
+    category_id: t.category || null,
+    labels: (t.labelIds || [])
+      .map(id => STATE.labels.find(l => l.id === id)?.name)
+      .filter(Boolean),
+    is_shared: !!t.isShared,
+    is_project: !!t.isProject,
+    project_from: t.projectFrom || null,
+    project_to: t.projectTo || null,
+    not_completed: !!t.notCompleted,
+    kendala: t.kendala || null,
+    not_completed_by: t.notCompletedBy?.name || null,
+    not_completed_at: tsToIso(t.notCompletedAt),
+    recovered_by: t.recoveredBy?.name || null,
+    recovered_at: tsToIso(t.recoveredAt),
+    is_deleted: !!t.isDeleted,
+    from_template: t.fromTemplateName || null,
+    assignee: t.assigneeName,
+    assignee_id: t.assigneeId,
+    created_by: t.createdByName,
+    created_at: tsToIso(t.createdAt),
+    updated_at: tsToIso(t.updatedAt),
+    completed_at: tsToIso(t.completedAt),
+    worked_minutes: worked,
+    worked_hours_str: fmtMinutesAsHours(worked),
+    checklists: (t.checklists || []).map(cl => ({
+      title: cl.title || '',
+      items: (cl.items || []).map(it => ({ text: it.text, done: !!it.done })),
+      done_count: (cl.items || []).filter(it => it.done).length,
+      total_count: (cl.items || []).length,
+    })),
+    comments: (t.comments || []).map(c => ({
+      author: c.authorName, text: c.text, at: tsToIso(c.createdAt),
+    })),
+    comments_count: (t.comments || []).length,
+    activity: (t.activity || []).map(a => ({
+      type: a.type, by: a.byName, at: tsToIso(a.at), from: a.from || null, to: a.to || null,
+    })),
+  };
+}
+
+function buildSummaryStats(tasks, notdoneTasks) {
+  const byStatus = {};
+  const byMember = {};
+  const byCategory = {};
+  const byDate = {};
+  let totalWorkedMinutes = 0;
+  tasks.forEach(t => {
+    byStatus[t.status || 'todo'] = (byStatus[t.status || 'todo'] || 0) + 1;
+    const mk = t.assigneeName || '?';
+    byMember[mk] = byMember[mk] || { total: 0, done: 0, proses: 0, todo: 0, notdone: 0, worked_minutes: 0 };
+    byMember[mk].total++;
+    if (t.status === 'done') byMember[mk].done++;
+    else if (t.status === 'proses') byMember[mk].proses++;
+    else byMember[mk].todo++;
+    if (t.notCompleted) byMember[mk].notdone++;
+    const w = computeWorkedMinutes(t);
+    byMember[mk].worked_minutes += w;
+    totalWorkedMinutes += w;
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const ck = cat ? cat.name : 'Tanpa kategori';
+    byCategory[ck] = byCategory[ck] || { total: 0, done: 0 };
+    byCategory[ck].total++;
+    if (t.status === 'done') byCategory[ck].done++;
+    const dk = t.date || 'tanpa-tgl';
+    byDate[dk] = byDate[dk] || { total: 0, done: 0 };
+    byDate[dk].total++;
+    if (t.status === 'done') byDate[dk].done++;
+  });
+  return {
+    total_tasks: tasks.length,
+    total_tidak_selesai: notdoneTasks.length,
+    by_status: byStatus,
+    by_member: byMember,
+    by_category: byCategory,
+    by_date: byDate,
+    total_worked_minutes: totalWorkedMinutes,
+    total_worked_hours_str: fmtMinutesAsHours(totalWorkedMinutes),
+    completion_rate: tasks.length ? Math.round((byStatus.done || 0) / tasks.length * 100) : 0,
+  };
+}
+
+// v2.52 — Excel (.xlsx) multi-sheet export via SheetJS
+async function exportAsXlsx(filename, d) {
+  if (typeof XLSX === 'undefined') {
+    toast('SheetJS belum loaded — coba refresh halaman', 'error'); return;
+  }
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Tasks
+  if (d.opts.tasks && d.tasks.length) {
+    const header = [
+      'Tanggal', 'Jam Mulai', 'Jam Selesai', 'Kategori', 'Judul', 'Deskripsi',
+      'Pelaksana', 'Tugas Bersama', 'Status', 'Progress %', 'Target', 'Terlaksana',
+      'Label', 'Proyek', 'Range Proyek',
+      'Tidak Selesai', 'Kendala', 'Ditandai Oleh', 'Ditandai Pada', 'Recovered Oleh', 'Recovered Pada',
+      'Dari Template', 'Deadline',
+      'Waktu Kerja (menit)', 'Waktu Kerja (jam)',
+      'Checklist Items', 'Checklist Done',
+      'Jumlah Comment', 'Comments Latest',
+      'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai Pada',
+    ];
+    const rows = d.tasks.map(t => {
+      const cat = CATEGORIES.find(c => c.id === t.category);
+      const labels = (t.labelIds || []).map(id => STATE.labels.find(l => l.id === id)?.name).filter(Boolean).join(' · ');
+      const worked = computeWorkedMinutes(t, d.from, d.to);
+      const allItems = (t.checklists || []).flatMap(cl => cl.items || []);
+      const doneItems = allItems.filter(it => it.done).length;
+      const projectRange = t.isProject ? `${t.projectFrom || ''} → ${t.projectTo || ''}` : '';
+      const latestComment = (t.comments || []).slice(-1)[0];
+      const latestCommentStr = latestComment ? `${latestComment.authorName}: ${(latestComment.text || '').slice(0,80)}` : '';
+      return [
+        t.date,
+        t.startTime || '',
+        t.endTime || '',
+        cat ? cat.name : '',
+        t.title || '',
+        (t.description || '').replace(/[\r\n]+/g, ' '),
+        t.assigneeName || '',
+        t.isShared ? 'Ya' : '',
+        (t.status || 'todo').toUpperCase(),
+        Number(t.progress || 0),
+        Number(t.target || 0) || '',
+        Number(t.progressCount || 0) || '',
+        labels,
+        t.isProject ? 'Ya' : '',
+        projectRange,
+        t.notCompleted ? 'YA' : '',
+        t.kendala || '',
+        t.notCompletedBy?.name || '',
+        tsToIso(t.notCompletedAt),
+        t.recoveredBy?.name || '',
+        tsToIso(t.recoveredAt),
+        t.fromTemplateName || '',
+        t.dueDate || '',
+        worked || '',
+        fmtMinutesAsHours(worked),
+        allItems.length || '',
+        allItems.length ? `${doneItems}/${allItems.length}` : '',
+        (t.comments || []).length || '',
+        latestCommentStr,
+        t.createdByName || '',
+        tsToIso(t.createdAt),
+        tsToIso(t.updatedAt),
+        tsToIso(t.completedAt),
+      ];
+    });
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Tugas');
+  }
+
+  // Sheet 2: Tugas Tidak Selesai
+  if (d.opts.notdone && d.notdoneTasks.length) {
+    const header = ['Tanggal', 'Judul', 'Pelaksana', 'Kategori', 'Kendala', 'Ditandai Oleh', 'Ditandai Pada', 'Status Sekarang'];
+    const rows = d.notdoneTasks.map(t => {
+      const cat = CATEGORIES.find(c => c.id === t.category);
+      return [
+        t.date, t.title, t.assigneeName, cat ? cat.name : '',
+        t.kendala || '',
+        t.notCompletedBy?.name || '',
+        tsToIso(t.notCompletedAt),
+        t.recoveredBy ? `Sudah recovered oleh ${t.recoveredBy.name}` : 'Belum recovered',
+      ];
+    });
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Tidak Selesai');
+  }
+
+  // Sheet 3: Catatan Penting
+  if (d.opts.reminders && d.reminders.length) {
+    const header = ['Tanggal', 'Jam', 'Tipe', 'Judul', 'Keterangan', 'Dibuat Oleh', 'Dibuat Pada'];
+    const rows = d.reminders.map(r => [
+      r.date || '', r.time || '', r.type || '',
+      r.title || '', (r.description || '').replace(/[\r\n]+/g, ' '),
+      r.createdByName || '', tsToIso(r.createdAt),
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Catatan Penting');
+  }
+
+  // Sheet 4: Berkas Penting
+  if (d.opts.files && d.files.length) {
+    const header = ['Nama Berkas', 'Tipe', 'URL', 'Keterangan', 'Upload Oleh', 'Upload Pada'];
+    const rows = d.files.map(f => [
+      f.name || '', f.typeLabel || f.ext || '',
+      f.url || '', (f.description || '').replace(/[\r\n]+/g, ' '),
+      f.uploadedBy || '', tsToIso(f.uploadedAt),
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Berkas Penting');
+  }
+
+  // Sheet 5: Templates
+  if (d.opts.templates && d.templates.length) {
+    const header = ['Nama Template', 'Status', 'Default Pelaksana', 'Default Kategori', 'Tugas Bersama', 'Hari Aktif', 'Jumlah Items'];
+    const rows = d.templates.map(t => [
+      t.name || '',
+      t.active ? 'Aktif' : 'Non-aktif',
+      STATE.members.find(m => m.id === t.defaultAssigneeId)?.name || '',
+      t.defaultCategoryId || '',
+      t.defaultIsShared ? 'Ya' : '',
+      Array.isArray(t.daysOfWeek) ? t.daysOfWeek.join(',') : 'Setiap hari',
+      (t.items || []).length,
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  }
+
+  // Sheet 6: Kalender Kerja overrides
+  if (d.opts.kalkerja && Object.keys(d.kalkerjaOverrides).length) {
+    const header = ['Bulan', 'Tanggal', 'Member ID', 'Member', 'Override Text'];
+    const rows = [];
+    Object.entries(d.kalkerjaOverrides).forEach(([ym, overrides]) => {
+      Object.entries(overrides).forEach(([cellKey, txt]) => {
+        // cellKey format: 'YYYY-MM-DD|memberId'
+        const [date, memberId] = cellKey.split('|');
+        const memberName = STATE.members.find(m => m.id === memberId)?.name || memberId;
+        rows.push([ym, date, memberId, memberName, txt]);
+      });
+    });
+    if (rows.length) {
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      XLSX.utils.book_append_sheet(wb, ws, 'Kalender Kerja');
+    }
+  }
+
+  // Sheet 7: Ringkasan Analitik
+  if (d.opts.summary && d.tasks.length) {
+    const stats = buildSummaryStats(d.tasks, d.notdoneTasks);
+    const rows = [
+      ['RINGKASAN ANALITIK'],
+      [],
+      ['Periode', `${d.from} s/d ${d.to}`],
+      ['Filter Anggota', d.memberLabel || 'Semua'],
+      ['Filter Kategori', d.categoryFilter || 'Semua'],
+      ['Total Tugas', stats.total_tasks],
+      ['Total Tidak Selesai', stats.total_tidak_selesai],
+      ['Total Jam Kerja', stats.total_worked_hours_str || '-'],
+      ['Completion Rate', `${stats.completion_rate}%`],
+      [],
+      ['STATUS DISTRIBUSI'],
+      ['Status', 'Jumlah'],
+      ...Object.entries(stats.by_status).map(([k, v]) => [k.toUpperCase(), v]),
+      [],
+      ['PER ANGGOTA'],
+      ['Nama', 'Total', 'Done', 'Proses', 'TODO', 'Tidak Selesai', 'Jam Kerja', '% Selesai'],
+      ...Object.entries(stats.by_member).map(([k, v]) => [
+        k, v.total, v.done, v.proses, v.todo, v.notdone,
+        fmtMinutesAsHours(v.worked_minutes),
+        v.total ? `${Math.round(v.done/v.total*100)}%` : '0%',
+      ]),
+      [],
+      ['PER KATEGORI'],
+      ['Kategori', 'Total', 'Done', '% Selesai'],
+      ...Object.entries(stats.by_category).map(([k, v]) => [
+        k, v.total, v.done, v.total ? `${Math.round(v.done/v.total*100)}%` : '0%',
+      ]),
+      [],
+      ['PER TANGGAL'],
+      ['Tanggal', 'Total', 'Done', '% Selesai'],
+      ...Object.entries(stats.by_date).sort((a,b) => a[0].localeCompare(b[0])).map(([k, v]) => [
+        k, v.total, v.done, v.total ? `${Math.round(v.done/v.total*100)}%` : '0%',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, 'Ringkasan');
+  }
+
+  // Meta sheet always last
+  const metaRows = [
+    ['META EXPORT'],
+    ['Exported At', new Date().toISOString()],
+    ['App Version', 'v2.52'],
+    ['Range From', d.from],
+    ['Range To', d.to],
+    ['Filter Anggota', d.memberLabel || 'Semua'],
+    ['Filter Kategori', d.categoryFilter || 'Semua'],
+    ['Total Tugas', d.tasks.length],
+    ['Total Tidak Selesai', d.notdoneTasks.length],
+    ['Total Catatan Penting', d.reminders.length],
+    ['Total Berkas Penting', d.files.length],
+    ['Total Template', d.templates.length],
+  ];
+  const wsMeta = XLSX.utils.aoa_to_sheet(metaRows);
+  XLSX.utils.book_append_sheet(wb, wsMeta, 'Meta');
+
+  XLSX.writeFile(wb, filename);
+}
+
+// v2.52 — Build CSV (1 sheet, format flat)
+function buildCsvContent(tasks, from, to) {
+  const header = [
+    'Tanggal', 'Jam Mulai', 'Jam Selesai', 'Kategori', 'Judul', 'Deskripsi',
+    'Pelaksana', 'Tugas Bersama', 'Status', 'Progress %', 'Target', 'Terlaksana',
+    'Label', 'Proyek', 'Range Proyek',
+    'Tidak Selesai', 'Kendala', 'Ditandai Oleh', 'Ditandai Pada',
+    'Dari Template', 'Deadline',
+    'Waktu Kerja (menit)', 'Waktu Kerja (jam)',
+    'Checklist Done/Total', 'Jumlah Comment',
+    'Dibuat Oleh', 'Dibuat', 'Update Terakhir', 'Selesai Pada',
+  ];
+  const rows = tasks.map(t => {
+    const cat = CATEGORIES.find(c => c.id === t.category);
+    const labels = (t.labelIds || []).map(id => STATE.labels.find(l => l.id === id)?.name).filter(Boolean).join(' · ');
+    const worked = computeWorkedMinutes(t, from, to);
+    const allItems = (t.checklists || []).flatMap(cl => cl.items || []);
+    const doneItems = allItems.filter(it => it.done).length;
+    return [
+      t.date,
+      t.startTime || '',
+      t.endTime || '',
+      cat ? cat.name : '',
+      t.title || '',
+      (t.description || '').replace(/[\r\n]+/g, ' '),
+      t.assigneeName || '',
+      t.isShared ? 'Ya' : '',
+      (t.status || 'todo').toUpperCase(),
+      `${t.progress || 0}%`,
+      t.target || '',
+      t.progressCount || '',
+      labels,
+      t.isProject ? 'Ya' : '',
+      t.isProject ? `${t.projectFrom || ''} → ${t.projectTo || ''}` : '',
+      t.notCompleted ? 'YA' : '',
+      (t.kendala || '').replace(/[\r\n]+/g, ' '),
+      t.notCompletedBy?.name || '',
+      tsToIso(t.notCompletedAt),
+      t.fromTemplateName || '',
+      t.dueDate || '',
+      worked || '',
+      fmtMinutesAsHours(worked),
+      allItems.length ? `${doneItems}/${allItems.length}` : '',
+      (t.comments || []).length,
+      t.createdByName || '',
+      tsToIso(t.createdAt),
+      tsToIso(t.updatedAt),
+      tsToIso(t.completedAt),
+    ];
+  });
+  return [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+}
+
+// v2.52 — Build Markdown report
+function buildMarkdownReport(d) {
+  let content = `# Laporan Team Tracker\n\n`;
+  content += `**Periode:** ${d.from} s/d ${d.to}\n`;
+  content += `**Anggota:** ${d.memberLabel}\n`;
+  content += `**Kategori:** ${d.categoryFilter || 'Semua'}\n`;
+  content += `**Generated:** ${new Date().toLocaleString('id-ID')}\n\n`;
+  content += `---\n\n`;
+
+  if (d.opts.summary && d.tasks.length) {
+    const stats = buildSummaryStats(d.tasks, d.notdoneTasks);
+    content += `## Ringkasan\n\n`;
+    content += `- **Total tugas:** ${stats.total_tasks}\n`;
+    content += `- **Completion rate:** ${stats.completion_rate}%\n`;
+    content += `- **Total jam kerja:** ${stats.total_worked_hours_str || '-'}\n`;
+    content += `- **Tidak selesai:** ${stats.total_tidak_selesai}\n\n`;
+
+    content += `### Status Distribusi\n`;
+    Object.entries(stats.by_status).forEach(([k, v]) => content += `- ${k.toUpperCase()}: ${v}\n`);
+    content += `\n### Per Anggota\n`;
+    content += `| Nama | Total | Done | Proses | TODO | Tidak Selesai | Jam Kerja | % Done |\n`;
+    content += `|---|---|---|---|---|---|---|---|\n`;
+    Object.entries(stats.by_member).forEach(([k, v]) => {
+      const pct = v.total ? Math.round(v.done/v.total*100) : 0;
+      content += `| ${k} | ${v.total} | ${v.done} | ${v.proses} | ${v.todo} | ${v.notdone} | ${fmtMinutesAsHours(v.worked_minutes) || '-'} | ${pct}% |\n`;
+    });
+    content += `\n### Per Kategori\n`;
+    content += `| Kategori | Total | Done | % Done |\n|---|---|---|---|\n`;
+    Object.entries(stats.by_category).forEach(([k, v]) => {
+      content += `| ${k} | ${v.total} | ${v.done} | ${v.total ? Math.round(v.done/v.total*100) : 0}% |\n`;
+    });
+    content += `\n---\n\n`;
+  }
+
+  if (d.opts.notdone && d.notdoneTasks.length) {
+    content += `## Tugas Tidak Selesai (${d.notdoneTasks.length})\n\n`;
+    d.notdoneTasks.forEach(t => {
+      content += `- **${t.title}** — ${t.assigneeName} (${t.date})\n`;
+      if (t.kendala) content += `  > Kendala: ${t.kendala}\n`;
+      if (t.notCompletedBy) content += `  > Ditandai oleh: ${t.notCompletedBy.name}\n`;
+    });
+    content += `\n---\n\n`;
+  }
+
+  if (d.opts.tasks && d.tasks.length) {
+    content += `## Detail Tugas\n\n`;
+    const byDate = {};
+    d.tasks.forEach(t => { (byDate[t.date] = byDate[t.date] || []).push(t); });
+    Object.keys(byDate).sort().forEach(dt => {
+      content += `\n### ${dt} (${dateLabel(dt)})\n\n`;
+      byDate[dt].forEach(t => {
+        const statusIcon = t.status === 'done' ? '[DONE]' : t.status === 'proses' ? '[PROSES]' : '[TODO]';
+        const ndIcon = t.notCompleted ? ' [TIDAK SELESAI]' : '';
+        const cat = CATEGORIES.find(c => c.id === t.category);
+        const catStr = cat ? ` [${cat.name}]` : '';
+        const timeStr = (t.startTime || t.endTime) ? ` ⏰ ${t.startTime || '?'}${t.endTime ? '–' + t.endTime : ''}` : '';
+        const targetStr = (Number(t.target) || 0) > 0 ? ` (target ${t.progressCount || 0}/${t.target})` : '';
+        const sharedStr = t.isShared ? ' 👥 BERSAMA' : '';
+        const worked = computeWorkedMinutes(t, d.from, d.to);
+        const workedStr = worked ? ` · ⏱ ${fmtMinutesAsHours(worked)}` : '';
+        content += `- ${statusIcon}${ndIcon}${catStr}${sharedStr} **${t.title}**${timeStr}${targetStr} · ${t.progress || 0}%${workedStr} — _${t.assigneeName}_\n`;
+        if (t.description) content += `  > ${t.description}\n`;
+        if (t.kendala) content += `  > Kendala: ${t.kendala}\n`;
+        (t.comments || []).slice(0, 3).forEach(c => content += `  - 💬 ${c.authorName}: ${c.text}\n`);
+      });
+    });
+    content += `\n---\n\n`;
+  }
+
+  if (d.opts.reminders && d.reminders.length) {
+    content += `## Catatan Penting (${d.reminders.length})\n\n`;
+    d.reminders.forEach(r => {
+      const dt = r.date + (r.time ? ` ${r.time}` : '');
+      content += `- **${r.title}** [${r.type || 'lainnya'}] — ${dt}\n`;
+      if (r.description) content += `  > ${r.description}\n`;
+    });
+    content += `\n---\n\n`;
+  }
+
+  if (d.opts.files && d.files.length) {
+    content += `## Berkas Penting (${d.files.length})\n\n`;
+    d.files.forEach(f => {
+      content += `- **${f.name}** [${f.typeLabel || f.ext}] — [${f.url}](${f.url})\n`;
+      if (f.description) content += `  > ${f.description}\n`;
+    });
+    content += `\n---\n\n`;
+  }
+
+  if (d.opts.templates && d.templates.length) {
+    content += `## Template Aktif (${d.templates.length})\n\n`;
+    d.templates.forEach(t => {
+      content += `- **${t.name}** ${t.active ? '✅' : '⏸️'} — default: ${STATE.members.find(m => m.id === t.defaultAssigneeId)?.name || 'Tanpa pelaksana'}, ${(t.items || []).length} item\n`;
+    });
+  }
+
+  return content;
 }
 
 function tsToIso(ts) {
