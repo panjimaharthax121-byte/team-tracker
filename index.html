@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.52 — ApotekKu</title>
+<title>Team Tracker v2.54 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -353,6 +353,14 @@
   .btn-accent-soft:hover { background: #fae8c9; }
   .btn-success { background: var(--success); color: white; }
   .btn-success:hover { background: #15803d; }
+  /* v2.53 — tombol Selesai look "blocked" kalau checklist belum komplit */
+  .btn-success.is-blocked {
+    background: #a7d3b3;
+    cursor: not-allowed;
+    opacity: 0.85;
+    position: relative;
+  }
+  .btn-success.is-blocked:hover { background: #94c2a3; }
   .btn-success-soft {
     background: var(--success-light);
     color: #15803d;
@@ -2949,7 +2957,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -3555,6 +3563,33 @@ function progressToStatus(p) {
   if (n >= 100) return 'done';
   if (n > 0) return 'proses';
   return 'todo';
+}
+
+/* =============================================================
+   v2.53 — CHECKLIST COMPLETION ENFORCEMENT
+   Aturan: task yang punya checklist tidak bisa di-mark 'done'
+   kalau belum semua centang. Menjaga integritas data — tracker
+   hanya valid kalau "Selesai" benar-benar berarti selesai.
+   ============================================================= */
+function checklistStats(checklists) {
+  const arr = Array.isArray(checklists) ? checklists : [];
+  const allItems = arr.flatMap(cl => Array.isArray(cl?.items) ? cl.items : []);
+  const total = allItems.length;
+  const done = allItems.filter(it => it && it.done === true).length;
+  return { total, done, hasChecklist: total > 0, isComplete: total === 0 || done === total };
+}
+// Block transisi ke done kalau checklist incomplete.
+// Returns: { ok: bool, done, total, message }
+function validateChecklistDone(checklists) {
+  const s = checklistStats(checklists);
+  if (!s.hasChecklist || s.isComplete) {
+    return { ok: true, ...s };
+  }
+  return {
+    ok: false,
+    ...s,
+    message: `Tidak bisa Selesaikan: checklist masih ${s.done}/${s.total}. Centang semua item dulu sebelum tandai Selesai.`,
+  };
 }
 function statusToProgress(s, currentProgress) {
   // Saat drag-drop antar kolom — set progress sesuai status tujuan.
@@ -6588,8 +6623,18 @@ function bindKalenderKerjaPage() {
   const excelBtn = document.getElementById('btn-kalkerja-excel');
 
   const refresh = () => renderKalenderKerjaGrid();
-  if (monthEl) monthEl.addEventListener('change', () => { s.month = parseInt(monthEl.value, 10); refresh(); });
-  if (yearEl) yearEl.addEventListener('change', () => { s.year = parseInt(yearEl.value, 10); refresh(); });
+  // v2.54 FIX: ganti bulan/tahun WAJIB reload override dari Firestore dulu.
+  // Sebelumnya cuma render → override bulan target gak ke-load (STATE masih isi bulan lama)
+  // → user lihat "cuma isi sistem", padahal data manual aman di Firestore.
+  const reloadAndRender = async () => {
+    const root = document.getElementById('kalkerja-grid-root');
+    if (root) root.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">⏳ Memuat data bulan ${s.month}/${s.year}...</div>`;
+    await loadKalKerjaOverrides();
+    renderKalenderKerjaGrid();
+  };
+  if (monthEl) monthEl.addEventListener('change', () => { s.month = parseInt(monthEl.value, 10); reloadAndRender(); });
+  if (yearEl) yearEl.addEventListener('change', () => { s.year = parseInt(yearEl.value, 10); reloadAndRender(); });
+  // memberFilter cuma filter tampilan, override sama-sama dari doc bulan ini → cukup re-render
   if (memberEl) memberEl.addEventListener('change', () => { s.memberFilter = memberEl.value || null; refresh(); });
   if (excelBtn) excelBtn.addEventListener('click', exportKalenderKerjaToExcel);
   const holBtn = document.getElementById('btn-kalkerja-holidays');
@@ -6606,7 +6651,18 @@ async function loadKalKerjaOverrides() {
   const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
   try {
     const snap = await getDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId));
-    STATE.kalKerjaOverrides = snap.exists() ? (snap.data().overrides || {}) : {};
+    const raw = snap.exists() ? (snap.data().overrides || {}) : {};
+    // v2.54 FIX: defensive prefix-filter. Key override format = `YYYY-MM-memberId-DD-slot`.
+    // Bug lama (ganti bulan gak reload) bisa nyelipin key bulan lain ke doc ini. Buang yg gak match.
+    const prefix = docId + '-';
+    const clean = {};
+    let dropped = 0;
+    Object.keys(raw).forEach(k => {
+      if (k.startsWith(prefix)) clean[k] = raw[k];
+      else dropped++;
+    });
+    STATE.kalKerjaOverrides = clean;
+    console.log(`[KalKerja] Load ${docId}: ${Object.keys(clean).length} override aktif${dropped ? ` (${dropped} junk cross-month di-skip)` : ''}`);
   } catch (err) {
     console.error('Gagal load overrides', err);
     STATE.kalKerjaOverrides = {};
@@ -6741,12 +6797,19 @@ function openHolidaysModal() {
 async function saveKalKerjaOverride(key, value) {
   const s = kalKerjaState();
   const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
+  // v2.54 FIX: guard — key HARUS prefix bulan aktif. Mencegah save nyasar ke doc bulan lain
+  // (mis kalau ada race antara ganti bulan & save mid-edit).
+  if (!key.startsWith(docId + '-')) {
+    console.warn(`[KalKerja] Skip save: key "${key}" gak match bulan aktif ${docId}`);
+    return;
+  }
   // v2.46: update local state DULU supaya UI responsive (gak nunggu Firestore round-trip)
   STATE.kalKerjaOverrides = STATE.kalKerjaOverrides || {};
   STATE.kalKerjaOverrides[key] = value;
-  // Firestore write — kalau gagal, throw supaya caller bisa handle
+  // v2.54: tulis HANYA via dot-path field `overrides.<key>` — bukan replace seluruh map.
+  // Lebih aman: gak pernah bisa overwrite/hapus key lain walau STATE partial.
   await setDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId), {
-    overrides: STATE.kalKerjaOverrides,
+    overrides: { [key]: value },
     updatedAt: serverTimestamp(),
     updatedBy: STATE.currentMember?.name || '?',
   }, { merge: true });
@@ -9303,6 +9366,13 @@ function renderTaskCard(t) {
 
   // Action buttons (conditional by status & permission)
   // v2.24: tombol "Tidak Selesai" ditambah di TODO & PROSES, supaya user bisa mark task gak bisa diselesaikan + isi alasan
+  // v2.53: tombol Selesai disabled-look kalau ada checklist incomplete (validation di updateTaskStatus tetap final gate)
+  const clkStats = checklistStats(t.checklists);
+  const checklistBlocked = clkStats.hasChecklist && !clkStats.isComplete;
+  const doneTitle = checklistBlocked
+    ? `Tidak bisa selesai — checklist ${clkStats.done}/${clkStats.total}`
+    : 'Tandai tugas selesai';
+  const doneBtnClass = checklistBlocked ? 'btn btn-success is-blocked' : 'btn btn-success';
   let actionsHtml = '';
   if (!locked) {
     if (status === 'todo') {
@@ -9319,8 +9389,8 @@ function renderTaskCard(t) {
         <button class="btn btn-ghost-soft" data-stop data-quick-action="todo:${t.id}">
           ↺ Batal
         </button>
-        <button class="btn btn-success" data-stop data-quick-action="done:${t.id}">
-          ✓ Selesai
+        <button class="${doneBtnClass}" data-stop data-quick-action="done:${t.id}" title="${doneTitle}">
+          ✓ Selesai${checklistBlocked ? ` <span style="font-size:10px;opacity:.85;font-weight:500">(${clkStats.done}/${clkStats.total})</span>` : ''}
         </button>
         <button class="btn btn-ghost-soft btn-sm" data-stop data-mark-notdone="${t.id}" title="Tandai task tidak selesai + isi alasan">
           ✗ Tidak Selesai
@@ -9720,6 +9790,15 @@ function openTaskModal(taskId = null, presets = {}) {
       // Semua checklist done → set progress 100 kalau user belum naikin
       finalProgress = 100;
       status = 'done';
+    }
+    // v2.53 — Enforce: kalau status='done' tapi checklist belum komplit, BLOCK save.
+    // Auto-downgrade ke 'proses' + warn user. Better: hard reject biar gak ambigu.
+    if (status === 'done') {
+      const v = validateChecklistDone(MODAL_STATE.checklists);
+      if (!v.ok) {
+        toast(v.message, 'error');
+        return;
+      }
     }
     try {
       if (isEdit) {
@@ -10139,9 +10218,20 @@ function bindProgressControl(modalState, readOnly) {
       valEl.className = `progress-control-value ${progressFillClass(pct)}`;
     }
     if (hintEl) {
-      hintEl.textContent = useCounter
-        ? `${count} / ${target} tercapai · status auto: ${progressToStatus(pct).toUpperCase()}`
-        : `Status auto: ${progressToStatus(pct).toUpperCase()}`;
+      const autoStatus = progressToStatus(pct);
+      let baseTxt = useCounter
+        ? `${count} / ${target} tercapai · status auto: ${autoStatus.toUpperCase()}`
+        : `Status auto: ${autoStatus.toUpperCase()}`;
+      hintEl.textContent = baseTxt;
+      hintEl.style.color = '';
+      // v2.53 — Warning kalau status calculated DONE tapi checklist belum komplit
+      if (autoStatus === 'done') {
+        const v = validateChecklistDone(modalState.checklists);
+        if (!v.ok) {
+          hintEl.textContent = `${baseTxt} · ⚠️ checklist ${v.done}/${v.total} — save akan ditolak`;
+          hintEl.style.color = '#dc2626';
+        }
+      }
     }
     // Sync slider visibility based on target mode
     const sliderWrap = document.getElementById('t-slider-wrap');
@@ -10477,6 +10567,14 @@ function bindCommentDelete(task) {
 async function updateTaskStatus(taskId, newStatus) {
   const task = STATE.tasks.find(t => t.id === taskId);
   if (!task) return;
+  // v2.53 — Enforce: task ber-checklist tidak boleh done kalau centang < 100%
+  if (newStatus === 'done') {
+    const v = validateChecklistDone(task.checklists);
+    if (!v.ok) {
+      toast(v.message, 'error');
+      return;
+    }
+  }
   const me = STATE.currentMember;
   const newProgress = statusToProgress(newStatus, task.progress);
   const update = {
