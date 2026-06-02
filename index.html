@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.54 — ApotekKu</title>
+<title>Team Tracker v2.55 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -361,6 +361,37 @@
     position: relative;
   }
   .btn-success.is-blocked:hover { background: #94c2a3; }
+
+  /* v2.55 — Status badge (TEKS, bukan ikon) di cell Kalender Kerja */
+  .kk-cell-wrap { display: flex; flex-direction: column; gap: 3px; }
+  .kk-status-badge {
+    display: inline-block;
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    line-height: 1.4;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .kk-status-badge.clickable { cursor: pointer; transition: filter .12s, transform .12s; }
+  .kk-status-badge.clickable:hover { filter: brightness(0.93); transform: translateY(-1px); }
+  .kk-status-badge.clickable:active { transform: translateY(0); }
+  .kk-st-belum   { background: #e5e7eb; color: #4b5563; }
+  .kk-st-proses  { background: #fde68a; color: #92400e; }
+  .kk-st-selesai { background: #bbf7d0; color: #166534; }
+  .kk-st-rencana { background: #dbeafe; color: #1e40af; }
+  .kk-cell-text { white-space: normal; word-break: break-word; line-height: 1.35; min-height: 14px; outline: none; }
+  .kk-cell-text:focus { background: #fffef0; box-shadow: inset 0 0 0 2px #fbbf24; border-radius: 3px; }
+  /* Cell background per status (lembut) */
+  .kk-bg-proses  { background: #fffbeb !important; }
+  .kk-bg-selesai { background: #f0fdf4 !important; }
+  /* Legend chips di header */
+  .kk-legend { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .kk-legend .chip { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono); }
   .btn-success-soft {
     background: var(--success-light);
     color: #15803d;
@@ -2844,6 +2875,7 @@ const STATE = {
   notifPanelOpen: false,        // v2.51 — apakah popup notif lagi visible
   kalKerja: null,               // v2.32 — { year, month, memberFilter } state Kalender Kerja
   kalKerjaOverrides: {},        // v2.32 — { '2026-05-memberid-DD-slot': 'override value' } loaded dari Firestore
+  kalKerjaStatuses: {},         // v2.55 — { '2026-05-memberid-DD-slot': 'proses'|'done' } status manual per cell (override manual)
   kalKerjaHolidays: {},         // v2.34 — { 'YYYY-MM-DD': 'nama libur' } global holidays
   dashboardPeriod: '7d',        // v2.47 — 'today' | '7d' | '30d' | 'month' | 'custom'
   dashboardCustomFrom: '',      // v2.47 — custom range from
@@ -2957,7 +2989,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -5317,6 +5349,102 @@ function kalKerjaCellContent(memberId, year, month, day, slotLabel) {
 }
 
 /* =============================================================
+   v2.55: STATUS PER CELL Kalender Kerja (BELUM/PROSES/SELESAI/RENCANA)
+   - Task real  → status OTOMATIS dari deriveTaskStatusOnDay (mantul dari Kanban)
+   - Override manual → status MANUAL (klik badge cycle), disimpan di field `statuses`
+   - Forecast future → "RENCANA"
+   ============================================================= */
+function kalKerjaStatusMeta(st) {
+  switch (st) {
+    case 'proses':  return { label: 'PROSES',  cls: 'kk-st-proses',  bgCls: 'kk-bg-proses' };
+    case 'selesai': return { label: 'SELESAI', cls: 'kk-st-selesai', bgCls: 'kk-bg-selesai' };
+    case 'rencana': return { label: 'RENCANA', cls: 'kk-st-rencana', bgCls: '' };
+    case 'belum':   return { label: 'BELUM',   cls: 'kk-st-belum',   bgCls: '' };
+    default:        return null;
+  }
+}
+// Agg status dari beberapa task real di 1 slot (kalau gabung " + ")
+function kalKerjaAggTaskStatus(tasksAtSlot, dateStr) {
+  const reals = tasksAtSlot.filter(t => !t._isVirtualForecast);
+  if (reals.length === 0) return 'rencana';
+  const sts = reals.map(t => deriveTaskStatusOnDay(t, dateStr));
+  if (sts.every(s => s === 'done')) return 'selesai';
+  if (sts.some(s => s === 'proses' || s === 'done')) return 'proses';
+  return 'belum';
+}
+// Status manual override (disimpan di STATE.kalKerjaStatuses) → '' | 'proses' | 'done'
+function kalKerjaGetManualStatus(baseKey) {
+  return (STATE.kalKerjaStatuses && STATE.kalKerjaStatuses[baseKey]) || '';
+}
+// Cycle: BELUM('') → PROSES → SELESAI(done) → BELUM('')
+function kalKerjaNextStatus(cur) {
+  if (cur === 'proses') return 'done';
+  if (cur === 'done') return '';
+  return 'proses';
+}
+async function saveKalKerjaStatus(baseKey, status) {
+  const s = kalKerjaState();
+  const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
+  if (!baseKey.startsWith(docId + '-')) { console.warn('[KalKerja] Skip status save, key mismatch:', baseKey); return; }
+  STATE.kalKerjaStatuses = STATE.kalKerjaStatuses || {};
+  if (status) STATE.kalKerjaStatuses[baseKey] = status;
+  else delete STATE.kalKerjaStatuses[baseKey];
+  // Single-key merge (anti overwrite key lain + aman concurrent edit)
+  await setDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId), {
+    statuses: { [baseKey]: status || '' },
+    updatedAt: serverTimestamp(),
+    updatedBy: STATE.currentMember?.name || '?',
+  }, { merge: true });
+}
+// Rich info per cell: { text, kind, status, editable, baseKey }
+// kind: 'lunch'|'override'|'task'|'forecast'|'libur'|'empty'
+// status: 'belum'|'proses'|'selesai'|'rencana'|null
+function kalKerjaCellInfo(memberId, year, month, day, slotLabel) {
+  const slot = KALKERJA_TIME_SLOTS.find(s => s.label === slotLabel);
+  if (!slot) return { text: '', kind: 'empty', status: null, editable: false, baseKey: '' };
+  if (slot.lunch) return { text: 'MAKAN SIANG', kind: 'lunch', status: null, editable: false, baseKey: '' };
+  const baseKey = `${year}-${String(month).padStart(2,'0')}-${memberId}-${String(day).padStart(2,'0')}-${slotLabel}`;
+  const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  // 1. Override manual
+  if (STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[baseKey] !== undefined) {
+    const text = STATE.kalKerjaOverrides[baseKey];
+    const manual = kalKerjaGetManualStatus(baseKey);
+    const status = (text && text.trim())
+      ? (manual === 'done' ? 'selesai' : manual === 'proses' ? 'proses' : 'belum')
+      : null;
+    return { text, kind: 'override', status, editable: true, baseKey };
+  }
+  // 2. Task scheduled di slot
+  const schedule = kalKerjaScheduleDay(memberId, year, month, day);
+  const tasksAtSlot = schedule[slotLabel] || [];
+  if (tasksAtSlot.length > 0) {
+    const text = tasksAtSlot.map(t => t._isVirtualForecast ? `📅 ${t.title || ''}` : (t.title || '')).join(' + ');
+    const allForecast = tasksAtSlot.every(t => t._isVirtualForecast);
+    const status = allForecast ? 'rencana' : kalKerjaAggTaskStatus(tasksAtSlot, dateStr);
+    return { text, kind: allForecast ? 'forecast' : 'task', status, editable: true, baseKey };
+  }
+  // 3. Libur
+  if (kalKerjaIsLiburDay(dateStr)) {
+    return { text: kalKerjaHolidayName(dateStr) || 'Libur', kind: 'libur', status: null, editable: true, baseKey };
+  }
+  // 4. Empty (hari kerja, slot kosong)
+  return { text: '', kind: 'empty', status: null, editable: true, baseKey };
+}
+// Render badge status (TEKS). Task/forecast = read-only, override manual = clickable cycle.
+function kalKerjaBadgeHtml(info) {
+  if (!info.status) return '';
+  const meta = kalKerjaStatusMeta(info.status);
+  if (!meta) return '';
+  const clickable = info.kind === 'override';
+  const cls = `kk-status-badge ${meta.cls}${clickable ? ' clickable' : ''}`;
+  const dataAttr = clickable ? `data-kk-cycle="${info.baseKey}"` : '';
+  const tip = clickable
+    ? 'Klik untuk ganti status (BELUM → PROSES → SELESAI)'
+    : (info.kind === 'task' ? 'Status otomatis dari Kanban' : 'Rencana (belum terjadi)');
+  return `<span class="${cls}" ${dataAttr} title="${tip}">${meta.label}</span>`;
+}
+
+/* =============================================================
    v2.47: DASHBOARD ANALYTICS — Phase 1 (Tier 1 lengkap)
    ============================================================= */
 const DASHBOARD_CHARTS = {}; // store Chart.js instances untuk destroy
@@ -6606,8 +6734,15 @@ function renderKalenderKerjaPageHtml() {
         </select>
       </div>
       <div class="filter-divider"></div>
-      <div style="font-size:11px;color:var(--text-muted);flex:1">
-        💡 Klik cell untuk edit manual (override). Cell <span style="background:#eff6ff;color:#1e40af;font-style:italic;padding:1px 6px;border-radius:3px">📅 italic biru</span> = forecast dari template (future). MAKAN SIANG locked.
+      <div style="font-size:11px;color:var(--text-muted);flex:1;min-width:240px">
+        💡 Klik <strong>teks</strong> untuk edit. Klik <strong>badge status</strong> (di cell ketik-tangan) untuk ganti BELUM→PROSES→SELESAI. Task dari Kanban statusnya otomatis.
+        <div class="kk-legend" style="margin-top:6px">
+          <span class="chip kk-st-belum">BELUM</span>
+          <span class="chip kk-st-proses">PROSES</span>
+          <span class="chip kk-st-selesai">SELESAI</span>
+          <span class="chip kk-st-rencana">RENCANA</span>
+          <span style="font-size:10px;color:var(--text-muted)">= forecast template (future)</span>
+        </div>
       </div>
     </div>
 
@@ -6651,7 +6786,9 @@ async function loadKalKerjaOverrides() {
   const docId = `${s.year}-${String(s.month).padStart(2,'0')}`;
   try {
     const snap = await getDoc(doc(STATE.db, 'monthlyCalendarOverrides', docId));
-    const raw = snap.exists() ? (snap.data().overrides || {}) : {};
+    const data = snap.exists() ? snap.data() : {};
+    const raw = data.overrides || {};
+    const rawSt = data.statuses || {};  // v2.55 — status per cell
     // v2.54 FIX: defensive prefix-filter. Key override format = `YYYY-MM-memberId-DD-slot`.
     // Bug lama (ganti bulan gak reload) bisa nyelipin key bulan lain ke doc ini. Buang yg gak match.
     const prefix = docId + '-';
@@ -6662,10 +6799,17 @@ async function loadKalKerjaOverrides() {
       else dropped++;
     });
     STATE.kalKerjaOverrides = clean;
-    console.log(`[KalKerja] Load ${docId}: ${Object.keys(clean).length} override aktif${dropped ? ` (${dropped} junk cross-month di-skip)` : ''}`);
+    // v2.55 — load statuses (prefix filter sama, buang kosong)
+    const cleanSt = {};
+    Object.keys(rawSt).forEach(k => {
+      if (k.startsWith(prefix) && rawSt[k]) cleanSt[k] = rawSt[k];
+    });
+    STATE.kalKerjaStatuses = cleanSt;
+    console.log(`[KalKerja] Load ${docId}: ${Object.keys(clean).length} override, ${Object.keys(cleanSt).length} status manual${dropped ? ` (${dropped} junk cross-month di-skip)` : ''}`);
   } catch (err) {
     console.error('Gagal load overrides', err);
     STATE.kalKerjaOverrides = {};
+    STATE.kalKerjaStatuses = {};
   }
 }
 
@@ -6878,24 +7022,38 @@ function renderKalenderKerjaGrid() {
         const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
         const dateStr = `${s.year}-${String(s.month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const isCustomHoliday = kalKerjaIsHoliday(dateStr); // v2.34: tanggal merah custom
-        const content = kalKerjaCellContent(m.id, s.year, s.month, d, slot.label);
-        const overrideKey = `${s.year}-${String(s.month).padStart(2,'0')}-${m.id}-${String(d).padStart(2,'0')}-${slot.label}`;
-        const hasOverride = STATE.kalKerjaOverrides && STATE.kalKerjaOverrides[overrideKey] !== undefined;
-        const isLiburContent = content && (content === 'Libur' || content.toLowerCase().startsWith('libur'));
-        const isForecastContent = content && content.startsWith('📅 '); // v2.40: virtual task dari template forecast
+        // Lunch cell — locked, gak ada status/badge
+        if (isLunch) {
+          html += `<td style="border:1px solid var(--border);padding:4px 6px;min-width:120px;max-width:180px;background:#fef3c7;font-weight:600;text-align:center;color:#92400e;vertical-align:middle">MAKAN SIANG</td>`;
+          continue;
+        }
+        // v2.55: rich cell info (text + kind + status)
+        const info = kalKerjaCellInfo(m.id, s.year, s.month, d, slot.label);
         let cellBg = '';
-        if (isLunch) cellBg = 'background:#fef3c7;font-weight:600;text-align:center;color:#92400e';
-        else if (isCustomHoliday) cellBg = 'background:#fecaca;color:#991b1b;font-style:italic;text-align:center;font-weight:600'; // tanggal merah custom = bg merah
-        else if (isLiburContent) cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
-        else if (isForecastContent) cellBg = 'background:#eff6ff;color:#1e40af;font-style:italic;opacity:0.85'; // forecast = biru muda + italic
-        else if (isWeekend) cellBg = 'background:#fef2f2';
-        else if (hasOverride) cellBg = 'background:#dbeafe;border-left:3px solid #2563eb';
-        const editable = !isLunch ? `contenteditable="true" data-kk-edit="${overrideKey}"` : '';
-        // v2.33: tooltip = full content + hint edit
-        const tooltipText = isLunch ? '' : (content ? `${content}\n\n(Klik untuk edit)` : '(Klik untuk isi manual)');
-        const titleAttr = !isLunch ? `title="${escapeHtml(tooltipText)}"` : '';
-        // v2.33: white-space:normal + word-break biar text wrap multi-line (gak truncate "...")
-        html += `<td style="border:1px solid var(--border);padding:4px 6px;min-width:120px;max-width:180px;white-space:normal;word-break:break-word;line-height:1.35;vertical-align:top;${cellBg}" ${editable} ${titleAttr}>${escapeHtml(content)}</td>`;
+        let extraCls = '';
+        if (isCustomHoliday && !(info.text && info.text.trim())) {
+          cellBg = 'background:#fecaca;color:#991b1b;font-style:italic;text-align:center;font-weight:600'; // tanggal merah kosong
+        } else if (info.kind === 'libur') {
+          cellBg = 'background:#f3f4f6;color:#9ca3af;font-style:italic;text-align:center';
+        } else if (info.status === 'proses') {
+          extraCls = 'kk-bg-proses';
+        } else if (info.status === 'selesai') {
+          extraCls = 'kk-bg-selesai';
+        } else if (info.kind === 'forecast') {
+          cellBg = 'background:#eff6ff';
+        } else if (isWeekend) {
+          cellBg = 'background:#fef2f2';
+        }
+        const textStyle = info.kind === 'forecast'
+          ? 'font-style:italic;color:#1e40af;opacity:0.9'
+          : (info.kind === 'libur' ? 'font-style:italic;color:#9ca3af' : '');
+        const badgeHtml = kalKerjaBadgeHtml(info);
+        const tipBase = (info.text && info.text.trim()) ? `${info.text}\n\n(Klik teks untuk edit)` : '(Klik untuk isi manual)';
+        const titleAttr = `title="${escapeHtml(tipBase)}"`;
+        html += `<td class="${extraCls}" style="border:1px solid var(--border);padding:4px 6px;min-width:120px;max-width:180px;vertical-align:top;${cellBg}" ${titleAttr}>` +
+          `<div class="kk-cell-wrap">${badgeHtml}` +
+          `<div class="kk-cell-text" contenteditable="true" data-kk-edit="${info.baseKey}" style="${textStyle}">${escapeHtml(info.text)}</div>` +
+          `</div></td>`;
       }
       html += `</tr>`;
     });
@@ -6954,6 +7112,33 @@ function renderKalenderKerjaGrid() {
       }
     });
   });
+
+  // v2.55: Bind klik badge status (override manual) → cycle BELUM→PROSES→SELESAI
+  root.querySelectorAll('[data-kk-cycle]').forEach(badge => {
+    badge.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const baseKey = badge.dataset.kkCycle;
+      const cur = kalKerjaGetManualStatus(baseKey);
+      const next = kalKerjaNextStatus(cur);
+      const nextNorm = next === 'done' ? 'selesai' : next === 'proses' ? 'proses' : 'belum';
+      const meta = kalKerjaStatusMeta(nextNorm);
+      try {
+        await saveKalKerjaStatus(baseKey, next);
+        // Update badge + cell bg in-place (gak full re-render, biar gak ganggu)
+        badge.className = `kk-status-badge ${meta.cls} clickable`;
+        badge.textContent = meta.label;
+        const td = badge.closest('td');
+        if (td) {
+          td.classList.remove('kk-bg-proses', 'kk-bg-selesai');
+          if (next === 'proses') td.classList.add('kk-bg-proses');
+          else if (next === 'done') td.classList.add('kk-bg-selesai');
+        }
+      } catch (err) {
+        console.error('Gagal save status', err);
+        toast('Gagal simpan status: ' + err.message, 'error');
+      }
+    });
+  });
 }
 
 function exportKalenderKerjaToExcel() {
@@ -6997,7 +7182,14 @@ function exportKalenderKerjaToExcel() {
     KALKERJA_TIME_SLOTS.forEach(slot => {
       const row = [slot.label];
       for (let d = 1; d <= daysInMonth; d++) {
-        row.push(kalKerjaCellContent(m.id, s.year, s.month, d, slot.label));
+        // v2.55: sertakan status sbg prefix teks [SELESAI]/[PROSES]/[BELUM]/[RENCANA]
+        const info = kalKerjaCellInfo(m.id, s.year, s.month, d, slot.label);
+        let cellTxt = info.text || '';
+        if (info.status && cellTxt.trim()) {
+          const meta = kalKerjaStatusMeta(info.status);
+          if (meta) cellTxt = `[${meta.label}] ${cellTxt}`;
+        }
+        row.push(cellTxt);
       }
       aoa.push(row);
     });
