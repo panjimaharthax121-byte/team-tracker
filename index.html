@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.56 — ApotekKu</title>
+<title>Team Tracker v2.57 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -5396,6 +5396,27 @@ async function saveKalKerjaStatus(baseKey, status) {
     updatedBy: STATE.currentMember?.name || '?',
   }, { merge: true });
 }
+// v2.57: Status PER SLOT untuk tracing temporal dalam sehari.
+//   - Task masih proses (belum done)        → semua slot 'proses'
+//   - Task done                              → slot TERAKHIR tempat task muncul = 'selesai',
+//                                              slot-slot sebelumnya = 'proses' (lagi dikerjain)
+//   - Task todo                              → '' (cuma judul, tanpa keterangan)
+// "slot terakhir" = slot dengan jam end paling besar tempat task ini ke-schedule hari itu.
+// Untuk task ber-jam (timeLog/startTime), slot terakhir ≈ titik selesai → akurat & real.
+function kalKerjaSlotStatus(task, schedule, slotLabel, dateStr) {
+  const dayStatus = deriveTaskStatusOnDay(task, dateStr);
+  if (dayStatus === 'proses') return 'proses';
+  if (dayStatus !== 'done') return ''; // todo / lainnya → tanpa keterangan
+  // done → cari slot terakhir (end terbesar) tempat task ini muncul di hari itu
+  let lastLabel = null, lastEnd = '';
+  for (const sl of KALKERJA_TIME_SLOTS) {
+    if (sl.lunch) continue;
+    const arr = schedule[sl.label] || [];
+    const here = arr.some(x => (x.id && task.id && x.id === task.id) || x === task);
+    if (here && sl.end > lastEnd) { lastEnd = sl.end; lastLabel = sl.label; }
+  }
+  return slotLabel === lastLabel ? 'selesai' : 'proses';
+}
 // Rich info per cell: { text, kind, status, editable, baseKey }
 // kind: 'lunch'|'override'|'task'|'forecast'|'libur'|'empty'
 // status: 'belum'|'proses'|'selesai'|'rencana'|null
@@ -5410,20 +5431,26 @@ function kalKerjaCellInfo(memberId, year, month, day, slotLabel) {
     const text = STATE.kalKerjaOverrides[baseKey];
     return { text, kind: 'override', status: null, editable: true, baseKey };
   }
-  // 2. Task scheduled di slot — status OTOMATIS ditulis INLINE di belakang judul tugas:
-  //    "FU tiktok shop (proses)". Status nempel ke TUGAS (dari Kanban), konsisten di semua
-  //    slot/tanggal tugas itu muncul — bukan di-set per cell tanggal.
+  // 2. Task scheduled di slot — status OTOMATIS ditulis INLINE di belakang judul tugas.
+  //    v2.57: status PER SLOT JAM (tracing temporal) — task selesai → slot awal "(proses)",
+  //    slot terakhir tempat task muncul "(selesai)". Jadi kebaca jam berapa proses, jam berapa kelar.
   const schedule = kalKerjaScheduleDay(memberId, year, month, day);
   const tasksAtSlot = schedule[slotLabel] || [];
   if (tasksAtSlot.length > 0) {
+    const realSts = []; // status per-slot tiap task real (buat warna bg cell)
     const text = tasksAtSlot.map(t => {
       if (t._isVirtualForecast) return `📅 ${t.title || ''}`;
-      const st = deriveTaskStatusOnDay(t, dateStr);
-      const suffix = st === 'proses' ? ' (proses)' : st === 'done' ? ' (selesai)' : '';
+      const st = kalKerjaSlotStatus(t, schedule, slotLabel, dateStr); // 'proses'|'selesai'|''
+      realSts.push(st);
+      const suffix = st === 'proses' ? ' (proses)' : st === 'selesai' ? ' (selesai)' : '';
       return `${t.title || ''}${suffix}`;
     }).join(' + ');
-    const allForecast = tasksAtSlot.every(t => t._isVirtualForecast);
-    const status = allForecast ? 'rencana' : kalKerjaAggTaskStatus(tasksAtSlot, dateStr);
+    const allForecast = realSts.length === 0;
+    let status;
+    if (allForecast) status = 'rencana';
+    else if (realSts.some(x => x === 'proses')) status = 'proses';   // ada yg masih jalan → kuning
+    else if (realSts.some(x => x === 'selesai')) status = 'selesai'; // semua kelar di slot ini → hijau
+    else status = 'belum';
     return { text, kind: allForecast ? 'forecast' : 'task', status, editable: true, baseKey };
   }
   // 3. Libur
