@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.61 — ApotekKu</title>
+<title>Team Tracker v2.62 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -5254,8 +5254,9 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
   const nowHHMM = `${String(nowD.getHours()).padStart(2,'0')}:${String(nowD.getMinutes()).padStart(2,'0')}`;
   const isToday = (dateStr === today);
   const timed = [];
-  const untimedReal = [];     // task disentuh tapi gak ke-track jam → buat pengisian (today/past)
+  const untimedDone = [];     // v2.62: DONE tanpa timeLog → ditaruh SEKALI di slot jam selesai (gak di-spread)
   const untimedForecast = []; // forecast tanpa startTime → round-robin (future)
+  const prosesFill = [];      // v2.62: tugas PROSES (ongoing) → buat pengisian biar kolom penuh
   tasks.forEach(t => {
     if (t._isVirtualForecast) {
       if (t.startTime) {
@@ -5276,9 +5277,11 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
       // ONGOING: tugas proses hari ini → end mengalir sampai jam sekarang
       if (st === 'proses' && isToday && nowHHMM > end) end = nowHHMM;
       timed.push({ task: t, start: realTime.start, end, source: 'timeLog' });
+      if (st === 'proses') prosesFill.push(t); // proses ongoing → boleh ngisi slot lain juga
+    } else if (st === 'proses') {
+      prosesFill.push(t); // proses tanpa timeLog → muncul lewat pengisian
     } else {
-      // udah disentuh tapi gak ke-track jam → masuk pengisian (biar tetap muncul & kolom penuh)
-      untimedReal.push(t);
+      untimedDone.push(t); // DONE tanpa timeLog → 1 slot di jam selesai
     }
   });
 
@@ -5291,6 +5294,23 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
         result[slot.label].push(task);
       }
     });
+  });
+
+  // v2.62: DONE tanpa timeLog → muncul SEKALI di slot jam SELESAI (completedAt). Gak ngulang di jam lain.
+  untimedDone.forEach(t => {
+    let cHHMM = null;
+    try { if (t.completedAt) cHHMM = tsToLocalHHMM(t.completedAt); } catch (e) {}
+    let target = null;
+    if (cHHMM) {
+      // prefer slot yg BERAKHIR di jam selesai; fallback slot yg MULAI di jam selesai (boundary mis 13:00 → 13-14)
+      target = KALKERJA_TIME_SLOTS.find(sl => !sl.lunch && cHHMM > sl.start && cHHMM <= sl.end)
+            || KALKERJA_TIME_SLOTS.find(sl => !sl.lunch && cHHMM >= sl.start && cHHMM < sl.end);
+      if (!target && cHHMM <= '08:00') target = KALKERJA_TIME_SLOTS.find(sl => sl.label === '08.00-09.00');
+      if (!target) { const w = KALKERJA_TIME_SLOTS.filter(sl => !sl.lunch); target = w[w.length - 1]; } // di luar jam kerja → slot terakhir
+    } else {
+      target = KALKERJA_TIME_SLOTS.find(sl => sl.label === '08.00-09.00');
+    }
+    if (target) result[target.label].push(t);
   });
 
   const isLibur = kalKerjaIsLiburDay(dateStr);
@@ -5326,13 +5346,12 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
         });
       }
     } else {
-      // Hari INI & LAMPAU: slot kosong diisi SEMUA tugas yg udah disentuh (BERTUMPUK — user OK).
-      // Todo udah di-skip, jadi cuma proses/done yg ngisi. Status per-slot (v2.58) tetap real.
-      const fillTasks = [...timed.map(x => x.task), ...untimedReal];
-      if (fillTasks.length > 0) {
+      // Hari INI & LAMPAU: slot kosong diisi tugas PROSES (ongoing) — BERTUMPUK OK.
+      // DONE TIDAK ikut pengisian → cuma muncul di jam KELARNYA, gak ngulang di jam berikutnya (sesuai user).
+      if (prosesFill.length > 0) {
         workingSlots.forEach(slot => {
           if (result[slot.label].length === 0) {
-            fillTasks.forEach(t => result[slot.label].push(t));
+            prosesFill.forEach(t => result[slot.label].push(t));
           }
         });
       }
