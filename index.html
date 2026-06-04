@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.60 — ApotekKu</title>
+<title>Team Tracker v2.61 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -5245,13 +5245,17 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     forecast.forEach(vt => tasks.push(vt));
   }
 
-  // v2.60: KEMUNCULAN BERBASIS REAL ENGAGEMENT (user: "proses/selesai itu real, belum dikerjakan tidak muncul").
-  //   - Task REAL → muncul HANYA kalau ada timeLog di tanggal ini (beneran dikerjakan). Penempatan =
-  //     jam real timeLog [start, end]. Belum dikerjakan / gak ke-track jam → SKIP (gak muncul).
-  //   - Task FORECAST (rencana future, _isVirtualForecast) → boleh muncul sbg rencana 📅:
-  //     pakai startTime kalau ada, else round-robin ngisi (cuma di hari depan).
+  // v2.61: PENUH + REAL + ONGOING ikut jam berjalan.
+  //   - Task udah disentuh (proses/done) → MUNCUL. Yg punya timeLog → di jam REAL. Yg proses & hari ini
+  //     → "mengalir" sampai jam SEKARANG (ongoing). Yg gak ke-track jam → ikut pengisian biar kolom penuh.
+  //   - Task BELUM disentuh (todo) → SKIP (belum dikerjakan tidak muncul).
+  //   - Task FORECAST (rencana, hari depan) → 📅 rencana.
+  const nowD = new Date();
+  const nowHHMM = `${String(nowD.getHours()).padStart(2,'0')}:${String(nowD.getMinutes()).padStart(2,'0')}`;
+  const isToday = (dateStr === today);
   const timed = [];
-  const untimed = []; // v2.60: cuma forecast (rencana future) yg di-round-robin
+  const untimedReal = [];     // task disentuh tapi gak ke-track jam → buat pengisian (today/past)
+  const untimedForecast = []; // forecast tanpa startTime → round-robin (future)
   tasks.forEach(t => {
     if (t._isVirtualForecast) {
       if (t.startTime) {
@@ -5259,16 +5263,23 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
         const end = t.endTime || kalKerjaAddMinutes(start, 60);
         timed.push({ task: t, start, end, source: 'forecast' });
       } else {
-        untimed.push(t);
+        untimedForecast.push(t);
       }
       return;
     }
-    // Task REAL → cuma muncul kalau ada engagement nyata (timeLog) di tanggal ini
+    // Task REAL → cuma kalau UDAH DISENTUH (proses/done). Todo (belum dikerjakan) → skip.
+    const st = deriveTaskStatusOnDay(t, dateStr);
+    if (st !== 'proses' && st !== 'done') return;
     const realTime = getTaskTimeFromLog(t, dateStr);
     if (realTime && realTime.start) {
-      timed.push({ task: t, start: realTime.start, end: realTime.end, source: 'timeLog' });
+      let end = realTime.end;
+      // ONGOING: tugas proses hari ini → end mengalir sampai jam sekarang
+      if (st === 'proses' && isToday && nowHHMM > end) end = nowHHMM;
+      timed.push({ task: t, start: realTime.start, end, source: 'timeLog' });
+    } else {
+      // udah disentuh tapi gak ke-track jam → masuk pengisian (biar tetap muncul & kolom penuh)
+      untimedReal.push(t);
     }
-    // else: SKIP — belum dikerjakan → GAK MUNCUL (jam kosong dibiarkan kosong, sesuai pilihan user)
   });
 
   // Place timed tasks (spread ke semua slot overlap)
@@ -5282,45 +5293,12 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
     });
   });
 
-  // v2.43: Untimed tasks fill SEMUA working slots (08-09 sampai 16-17, skip 06-08 & lunch)
-  //         supaya hari kerja gak bolong-bolong.
-  //   - Hari kerja: ROUND-ROBIN — kalau cuma 1 untimed task, dia mengisi 8 slot semua (full).
-  //     Kalau ada N untimed tasks, distribute bergantian.
-  //   - Hari libur: 1 task per slot kosong (gak round-robin). Sisa slot tetap "Libur".
-  //     User explicit set jam timed kalau mau task tampil di hari libur jam spesifik.
   const isLibur = kalKerjaIsLiburDay(dateStr);
+  const isFuture = dateStr > today;
   const workingSlots = KALKERJA_TIME_SLOTS.filter(s => !s.lunch && s.label !== '06.00-08.00');
-  if (untimed.length > 0) {
-    if (!isLibur) {
-      // Hari kerja: round-robin fill SEMUA working slot kosong
-      let robinIdx = 0;
-      workingSlots.forEach(slot => {
-        if (result[slot.label].length === 0) {
-          result[slot.label].push(untimed[robinIdx % untimed.length]);
-          robinIdx++;
-        }
-      });
-    } else {
-      // Hari libur: 1 task per slot kosong (mulai 08-09), sisa task tumpuk slot terakhir
-      let untimedIdx = 0;
-      for (const slot of workingSlots) {
-        if (untimedIdx >= untimed.length) break;
-        if (result[slot.label].length === 0) {
-          result[slot.label].push(untimed[untimedIdx]);
-          untimedIdx++;
-        }
-      }
-      while (untimedIdx < untimed.length) {
-        const lastSlot = workingSlots[workingSlots.length - 1];
-        result[lastSlot.label].push(untimed[untimedIdx]);
-        untimedIdx++;
-      }
-    }
-  }
 
-  // v2.58: Catat "titik kelar REAL" tiap task = slot terakhir (end terbesar) tempat task muncul
-  // SEBELUM pass pengisian. Dipakai status per-slot biar "(selesai)" nempel di jam kelar real,
-  // bukan geser ke slot pengisian sore.
+  // v2.58: Catat "titik kelar REAL" tiap task = slot terakhir (end terbesar) tempat task ditempatkan
+  // dari timeLog (SEBELUM pengisian). Dipakai status per-slot biar "(selesai)" nempel di jam kelar real.
   const slotEndOf = {};
   KALKERJA_TIME_SLOTS.forEach(sl => { slotEndOf[sl.label] = sl.end; });
   const lastRealSlot = {}; // taskId -> slotLabel
@@ -5334,9 +5312,32 @@ function kalKerjaScheduleDay(memberId, year, month, day) {
   });
   result.__lastRealSlot = lastRealSlot;
 
-  // v2.60: PASS PENGISIAN DIHAPUS. Tugas cuma muncul di jam REAL dikerjakan (timeLog).
-  // Jam tanpa aktivitas dibiarkan KOSONG — sesuai pilihan user "real, boleh kosong"
-  // ("belum dikerjakan tidak muncul"). Gak ada lagi tugas yg di-spread ke jam yg gak dikerjakan.
+  // v2.61: PASS PENGISIAN — kolom PENUH sampai bawah.
+  if (!isLibur) {
+    if (isFuture) {
+      // Hari DEPAN: round-robin forecast (rencana 📅) 1 per slot kosong
+      if (untimedForecast.length > 0) {
+        let ri = 0;
+        workingSlots.forEach(slot => {
+          if (result[slot.label].length === 0) {
+            result[slot.label].push(untimedForecast[ri % untimedForecast.length]);
+            ri++;
+          }
+        });
+      }
+    } else {
+      // Hari INI & LAMPAU: slot kosong diisi SEMUA tugas yg udah disentuh (BERTUMPUK — user OK).
+      // Todo udah di-skip, jadi cuma proses/done yg ngisi. Status per-slot (v2.58) tetap real.
+      const fillTasks = [...timed.map(x => x.task), ...untimedReal];
+      if (fillTasks.length > 0) {
+        workingSlots.forEach(slot => {
+          if (result[slot.label].length === 0) {
+            fillTasks.forEach(t => result[slot.label].push(t));
+          }
+        });
+      }
+    }
+  }
 
   kalKerjaCacheBox.map.set(cacheKey, result);
   return result;
@@ -6824,7 +6825,20 @@ function bindKalenderKerjaPage() {
   Promise.all([loadKalKerjaOverrides(), loadKalKerjaHolidays()]).then(() => {
     renderKalenderKerjaGrid();
   });
+
+  // v2.61: AUTO-REFRESH tiap 60 detik — biar status "ongoing" mengikuti jam yg lagi berjalan
+  // (tugas proses hari ini ngalir sampai jam sekarang). Skip kalau lagi edit cell (anti ganggu).
+  if (_kalKerjaTick) clearInterval(_kalKerjaTick);
+  _kalKerjaTick = setInterval(() => {
+    if (STATE.currentView !== 'kalkerja') { clearInterval(_kalKerjaTick); _kalKerjaTick = null; return; }
+    const active = document.activeElement;
+    const editing = active && active.matches && active.matches('[data-kk-edit]');
+    if (editing) return; // jangan ganggu user yg lagi ngetik
+    kalKerjaInvalidateCache();
+    renderKalenderKerjaGrid();
+  }, 60 * 1000);
 }
+let _kalKerjaTick = null; // v2.61 — interval auto-refresh ongoing
 
 async function loadKalKerjaOverrides() {
   const s = kalKerjaState();
