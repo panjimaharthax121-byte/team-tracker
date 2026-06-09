@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.62 — ApotekKu</title>
+<title>Team Tracker v2.63 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -2989,7 +2989,7 @@ const AUTH_TTL_DAYS = 7;
 // Embedded config — kalau diisi, semua user langsung pakai config ini tanpa setup wizard.
 // Cara mengisi: setup Firebase di browser sekali, lalu klik "Bagikan ke tim" — download
 // file index.html yang sudah punya config ini terisi, upload ulang ke GitHub Pages.
-const EMBEDDED_CONFIG = {"apiKey":"AIzaSyClTYlE5IhKSl52pcPo1iRFL3HMWAHk8S8","authDomain":"b2c-tracker-947d4.firebaseapp.com","projectId":"b2c-tracker-947d4","storageBucket":"b2c-tracker-947d4.firebasestorage.app","messagingSenderId":"786558711148","appId":"1:786558711148:web:588cebff56ae8b73782f49","measurementId":"G-3ZHZ04E1G7"};
+const EMBEDDED_CONFIG = null;
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
@@ -12902,7 +12902,8 @@ function openExportModal() {
       // Fetch tasks dalam range
       let tasks = [];
       let notdoneTasks = [];
-      if (opts.tasks || opts.notdone || opts.summary) {
+      let tasksForKalender = []; // v2.63: dataset utuh buat render Kalender Kerja (gak ikut clear)
+      if (opts.tasks || opts.notdone || opts.summary || opts.kalkerja) {
         const tasksRef = collection(STATE.db, 'tasks');
         const q = query(tasksRef, where('date', '>=', from), where('date', '<=', to));
         const snap = await getDocs(q);
@@ -12912,6 +12913,8 @@ function openExportModal() {
         if (memberFilter) tasks = tasks.filter(t => t.assigneeId === memberFilter || t.isShared);
         if (categoryFilter) tasks = tasks.filter(t => t.category === categoryFilter);
         if (!includeDeleted) tasks = tasks.filter(t => t.isDeleted !== true);
+        // v2.63: snapshot utuh (sebelum clear) buat render Kalender Kerja
+        tasksForKalender = tasks.slice();
         // Separate notdone
         notdoneTasks = tasks.filter(t => t.notCompleted === true);
         if (!opts.tasks) tasks = []; // user cuma minta notdone
@@ -12969,16 +12972,16 @@ function openExportModal() {
       const filename = `team_tracker_${from}_to_${to}_${safeName}.${ext}`;
 
       if (format === 'xlsx') {
-        await exportAsXlsx(filename, { tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberFilter, memberLabel, categoryFilter });
+        await exportAsXlsx(filename, { tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, tasksForKalender, opts, from, to, memberFilter, memberLabel, categoryFilter });
       } else if (format === 'json') {
-        const content = JSON.stringify(buildExportObject({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberFilter, memberLabel, categoryFilter }), null, 2);
+        const content = JSON.stringify(buildExportObject({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, tasksForKalender, opts, from, to, memberFilter, memberLabel, categoryFilter }), null, 2);
         downloadFile(filename, content, 'application/json');
       } else if (format === 'csv') {
         const content = buildCsvContent(tasks, from, to);
         downloadFile(filename, content, 'text/csv');
       } else {
         // markdown
-        const content = buildMarkdownReport({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, opts, from, to, memberLabel, categoryFilter });
+        const content = buildMarkdownReport({ tasks, notdoneTasks, reminders, files, templates, kalkerjaOverrides, tasksForKalender, opts, from, to, memberFilter, memberLabel, categoryFilter });
         downloadFile(filename, content, 'text/markdown');
       }
 
@@ -12999,7 +13002,7 @@ function buildExportObject(d) {
   return {
     export_meta: {
       exported_at: new Date().toISOString(),
-      app_version: 'v2.52',
+      app_version: 'v2.63',
       range: { from: d.from, to: d.to },
       filter_member: d.memberLabel,
       filter_category: d.categoryFilter || 'Semua',
@@ -13039,8 +13042,90 @@ function buildExportObject(d) {
       })),
     })) : undefined,
     kalkerja_overrides: d.opts.kalkerja ? d.kalkerjaOverrides : undefined,
-    summary: d.opts.summary ? buildSummaryStats(d.tasks, d.notdoneTasks) : undefined,
+    // v2.63 — jadwal per-jam hasil render (SAMA kayak grid Kalender Kerja di app),
+    // udah include status (proses)/(selesai) per slot dari timeLog. Bukan override mentah.
+    kalender_kerja_render: d.opts.kalkerja ? buildKalenderRenderForExport(d) : undefined,
+    summary: d.opts.summary ? buildSummaryStats(d.tasks, d.notdoneTasks, d.from, d.to) : undefined,
   };
+}
+
+// v2.63 — Render Kalender Kerja per-jam untuk SELURUH range export (lintas bulan).
+// Pakai STATE-swap: pasang tasks + overrides bulan ybs ke STATE, panggil kalKerjaCellInfo
+// (fungsi yg SAMA dipakai grid & Excel kalender), lalu restore. Konsisten 100% dgn tampilan.
+// Catatan: render pakai task hasil fetch range — task carry-over yg MULAI sebelum 'from'
+// mungkin tak ikut (range query by date). Untuk analisa periode, ini cukup & self-consistent.
+function buildKalenderRenderForExport(d) {
+  const tasksForRender = d.tasksForKalender || [];
+  const out = [];
+  let members = (STATE.members || []).filter(m => !m.hidden);
+  if (d.memberFilter) members = members.filter(m => m.id === d.memberFilter);
+
+  const savedTasks = STATE.tasks;
+  const savedOverrides = STATE.kalKerjaOverrides;
+  try {
+    STATE.tasks = tasksForRender;
+    const start = new Date(d.from + 'T12:00:00');
+    const end = new Date(d.to + 'T12:00:00');
+    let curMonthKey = null;
+    for (let dt = new Date(start); dt <= end; dt.setDate(dt.getDate() + 1)) {
+      const y = dt.getFullYear();
+      const mo = dt.getMonth() + 1;
+      const day = dt.getDate();
+      const ym = `${y}-${String(mo).padStart(2, '0')}`;
+      const dateStr = `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      if (ym !== curMonthKey) {
+        STATE.kalKerjaOverrides = (d.kalkerjaOverrides && d.kalkerjaOverrides[ym]) || {};
+        kalKerjaInvalidateCache();
+        curMonthKey = ym;
+      }
+      members.forEach(m => {
+        const slots = [];
+        KALKERJA_TIME_SLOTS.forEach(slot => {
+          const info = kalKerjaCellInfo(m.id, y, mo, day, slot.label);
+          if (info.text && info.kind !== 'lunch' && info.kind !== 'empty') {
+            slots.push({ jam: slot.label, isi: info.text, status: info.status || null, jenis: info.kind });
+          }
+        });
+        if (slots.length > 0) {
+          out.push({ tanggal: dateStr, anggota: m.name, anggota_id: m.id, slots });
+        }
+      });
+    }
+  } finally {
+    STATE.tasks = savedTasks;
+    STATE.kalKerjaOverrides = savedOverrides;
+    kalKerjaInvalidateCache();
+  }
+  return out;
+}
+
+// v2.63 — sessions timeLog MENTAH (dimensi waktu: kapan mulai, stop, durasi per sesi).
+// Inilah data yg bikin Claude bisa analisa "jam berapa proses, jam berapa selesai, ada gap kerja gak".
+function mapTimeLogForExport(task) {
+  const log = task?.timeLog || [];
+  if (!Array.isArray(log) || log.length === 0) return [];
+  const out = [];
+  log.forEach(s => {
+    if (!s || !s.startedAt) return;
+    const startMs = s.startedAt.toMillis ? s.startedAt.toMillis() : (typeof s.startedAt === 'number' ? s.startedAt : new Date(s.startedAt).getTime());
+    if (!isFinite(startMs)) return;
+    const hasEnd = !!s.endedAt;
+    const endMs = hasEnd
+      ? (s.endedAt.toMillis ? s.endedAt.toMillis() : (typeof s.endedAt === 'number' ? s.endedAt : new Date(s.endedAt).getTime()))
+      : null;
+    const durasi = (hasEnd && isFinite(endMs) && endMs > startMs) ? Math.round((endMs - startMs) / 60000) : null;
+    out.push({
+      tanggal: tsToLocalDateStr(s.startedAt),
+      mulai: tsToLocalHHMM(s.startedAt),
+      selesai: hasEnd ? tsToLocalHHMM(s.endedAt) : null,
+      mulai_iso: tsToIso(s.startedAt),
+      selesai_iso: hasEnd ? tsToIso(s.endedAt) : null,
+      durasi_menit: durasi,
+      masih_berjalan: !hasEnd,
+    });
+  });
+  out.sort((a, b) => (a.mulai_iso || '').localeCompare(b.mulai_iso || ''));
+  return out;
 }
 
 function mapTaskForExport(t, from, to) {
@@ -13083,6 +13168,8 @@ function mapTaskForExport(t, from, to) {
     completed_at: tsToIso(t.completedAt),
     worked_minutes: worked,
     worked_hours_str: fmtMinutesAsHours(worked),
+    sessions_count: (t.timeLog || []).length,
+    time_log: mapTimeLogForExport(t),
     checklists: (t.checklists || []).map(cl => ({
       title: cl.title || '',
       items: (cl.items || []).map(it => ({ text: it.text, done: !!it.done })),
@@ -13099,7 +13186,7 @@ function mapTaskForExport(t, from, to) {
   };
 }
 
-function buildSummaryStats(tasks, notdoneTasks) {
+function buildSummaryStats(tasks, notdoneTasks, from, to) {
   const byStatus = {};
   const byMember = {};
   const byCategory = {};
@@ -13114,7 +13201,7 @@ function buildSummaryStats(tasks, notdoneTasks) {
     else if (t.status === 'proses') byMember[mk].proses++;
     else byMember[mk].todo++;
     if (t.notCompleted) byMember[mk].notdone++;
-    const w = computeWorkedMinutes(t);
+    const w = computeWorkedMinutes(t, from, to);
     byMember[mk].worked_minutes += w;
     totalWorkedMinutes += w;
     const cat = CATEGORIES.find(c => c.id === t.category);
@@ -13266,16 +13353,14 @@ async function exportAsXlsx(filename, d) {
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
   }
 
-  // Sheet 6: Kalender Kerja overrides
-  if (d.opts.kalkerja && Object.keys(d.kalkerjaOverrides).length) {
-    const header = ['Bulan', 'Tanggal', 'Member ID', 'Member', 'Override Text'];
+  // Sheet 6: Kalender Kerja (render per-jam — SAMA kayak grid di app, status proses/selesai inline)
+  if (d.opts.kalkerja) {
+    const render = buildKalenderRenderForExport(d);
+    const header = ['Tanggal', 'Anggota', 'Jam', 'Isi', 'Status', 'Jenis'];
     const rows = [];
-    Object.entries(d.kalkerjaOverrides).forEach(([ym, overrides]) => {
-      Object.entries(overrides).forEach(([cellKey, txt]) => {
-        // cellKey format: 'YYYY-MM-DD|memberId'
-        const [date, memberId] = cellKey.split('|');
-        const memberName = STATE.members.find(m => m.id === memberId)?.name || memberId;
-        rows.push([ym, date, memberId, memberName, txt]);
+    render.forEach(day => {
+      day.slots.forEach(s => {
+        rows.push([day.tanggal, day.anggota, s.jam, s.isi, s.status || '', s.jenis || '']);
       });
     });
     if (rows.length) {
@@ -13286,7 +13371,7 @@ async function exportAsXlsx(filename, d) {
 
   // Sheet 7: Ringkasan Analitik
   if (d.opts.summary && d.tasks.length) {
-    const stats = buildSummaryStats(d.tasks, d.notdoneTasks);
+    const stats = buildSummaryStats(d.tasks, d.notdoneTasks, d.from, d.to);
     const rows = [
       ['RINGKASAN ANALITIK'],
       [],
@@ -13330,7 +13415,7 @@ async function exportAsXlsx(filename, d) {
   const metaRows = [
     ['META EXPORT'],
     ['Exported At', new Date().toISOString()],
-    ['App Version', 'v2.52'],
+    ['App Version', 'v2.63'],
     ['Range From', d.from],
     ['Range To', d.to],
     ['Filter Anggota', d.memberLabel || 'Semua'],
@@ -13410,7 +13495,7 @@ function buildMarkdownReport(d) {
   content += `---\n\n`;
 
   if (d.opts.summary && d.tasks.length) {
-    const stats = buildSummaryStats(d.tasks, d.notdoneTasks);
+    const stats = buildSummaryStats(d.tasks, d.notdoneTasks, d.from, d.to);
     content += `## Ringkasan\n\n`;
     content += `- **Total tugas:** ${stats.total_tasks}\n`;
     content += `- **Completion rate:** ${stats.completion_rate}%\n`;
@@ -13493,6 +13578,26 @@ function buildMarkdownReport(d) {
     d.templates.forEach(t => {
       content += `- **${t.name}** ${t.active ? '✅' : '⏸️'} — default: ${STATE.members.find(m => m.id === t.defaultAssigneeId)?.name || 'Tanpa pelaksana'}, ${(t.items || []).length} item\n`;
     });
+    content += `\n---\n\n`;
+  }
+
+  // v2.63 — Kalender Kerja per-jam (render, status proses/selesai inline)
+  if (d.opts.kalkerja) {
+    const render = buildKalenderRenderForExport(d);
+    if (render.length) {
+      content += `## Kalender Kerja (per-jam)\n\n`;
+      const byDate = {};
+      render.forEach(r => { (byDate[r.tanggal] = byDate[r.tanggal] || []).push(r); });
+      Object.keys(byDate).sort().forEach(dt => {
+        content += `\n### ${dt}\n\n`;
+        byDate[dt].forEach(r => {
+          content += `**${r.anggota}**\n`;
+          r.slots.forEach(s => {
+            content += `- ${s.jam}: ${s.isi}\n`;
+          });
+        });
+      });
+    }
   }
 
   return content;
