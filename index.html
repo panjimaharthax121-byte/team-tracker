@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.63 — ApotekKu</title>
+<title>Team Tracker v2.64 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -9134,6 +9134,9 @@ function renderMain() {
           <button class="sidebar-nav-item" data-nav="export">
             <span class="sidebar-nav-icon">📊</span>Export Data
           </button>
+          <button class="sidebar-nav-item" data-nav="import">
+            <span class="sidebar-nav-icon">📥</span>Import Tugas
+          </button>
           ${isAdmin ? `
             <button class="sidebar-nav-item" data-nav="share">
               <span class="sidebar-nav-icon">🔗</span>Bagikan App
@@ -9274,6 +9277,7 @@ function renderMain() {
         case 'labels': openLabelsModal(); break;
         case 'templates': openTemplatesModal(); break;
         case 'export': openExportModal(); break;
+        case 'import': openImportModal(); break;
         case 'share': openShareKitModal(); break;
       }
     });
@@ -12761,6 +12765,423 @@ function fmtMinutesAsHours(min) {
   return `${h}j ${m}m`;
 }
 
+/* =============================================================
+   v2.64 — IMPORT TUGAS (JSON / CSV / Excel / paste dari Claude)
+   Alur: upload/paste → parse → normalisasi + validasi → preview → import batch.
+   Status SELALU 'todo' (import = rencana kerja, bukan pindahan histori).
+   ============================================================= */
+let IMP_STATE = null; // { rows: [raw...], fileName }
+
+function impNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+function impNormKey(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
+// Alias kolom → field internal (key sudah di-impNormKey)
+const IMP_ALIASES = {
+  title:       ['judul', 'title', 'tugas', 'namatugas', 'task', 'nama'],
+  date:        ['tanggal', 'date', 'tgl'],
+  assignee:    ['pelaksana', 'assignee', 'anggota', 'pic', 'penanggungjawab'],
+  category:    ['kategori', 'category', 'divisi'],
+  startTime:   ['jammulai', 'starttime', 'mulai', 'start'],
+  endTime:     ['jamselesai', 'endtime', 'selesai', 'end'],
+  dueDate:     ['deadline', 'duedate', 'due', 'tenggat'],
+  target:      ['target'],
+  description: ['deskripsi', 'description', 'keterangan', 'catatan'],
+  shared:      ['bersama', 'tugasbersama', 'shared', 'isshared'],
+  checklist:   ['checklist', 'checklists', 'subtugas', 'langkah'],
+  isProject:   ['proyek', 'isproject', 'project'],
+  projectTo:   ['projectto', 'proyeksampai', 'tanggalselesaiproyek'],
+};
+
+function impPickField(rowObj, field) {
+  const keys = Object.keys(rowObj);
+  for (const alias of IMP_ALIASES[field]) {
+    const k = keys.find(kk => impNormKey(kk) === alias);
+    if (k !== undefined && rowObj[k] !== undefined && rowObj[k] !== null && String(rowObj[k]).trim() !== '') return rowObj[k];
+  }
+  return null;
+}
+
+// Terima: 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'DD-MM-YYYY' | Excel serial number | Date
+function impParseDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !isNaN(v)) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  if (typeof v === 'number' && v > 20000 && v < 60000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return 'INVALID';
+}
+
+// Terima 'HH:MM' | 'H:MM' | 'HH.MM' → 'HH:MM', selain itu null
+function impParseTime(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim().replace('.', ':');
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = Math.min(23, Number(m[1]));
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
+
+function impParseBool(v) {
+  if (v === true) return true;
+  const s = impNorm(v);
+  return ['ya', 'yes', 'true', '1', 'y'].includes(s);
+}
+
+// checklist: array of string | array of {title,items} | string "a; b; c"
+function impParseChecklist(v) {
+  if (v == null || v === '') return [];
+  if (Array.isArray(v)) {
+    if (v.length === 0) return [];
+    if (typeof v[0] === 'object' && v[0] !== null && Array.isArray(v[0].items)) {
+      // format penuh: [{title, items:[...]}]
+      return v.map(cl => ({
+        id: uid(),
+        title: String(cl.title || 'Checklist'),
+        items: (cl.items || []).map(it => ({
+          id: uid(),
+          text: typeof it === 'object' ? String(it.text || '') : String(it),
+          done: false,
+        })).filter(it => it.text),
+      })).filter(cl => cl.items.length > 0);
+    }
+    // array of string
+    const items = v.map(x => String(x).trim()).filter(Boolean);
+    return items.length ? [{ id: uid(), title: 'Checklist', items: items.map(t => ({ id: uid(), text: t, done: false })) }] : [];
+  }
+  // string dipisah ; atau |
+  const items = String(v).split(/[;|]/).map(x => x.trim()).filter(Boolean);
+  return items.length ? [{ id: uid(), title: 'Checklist', items: items.map(t => ({ id: uid(), text: t, done: false })) }] : [];
+}
+
+function impMatchMember(name) {
+  if (!name) return null;
+  const n = impNorm(name);
+  return STATE.members.find(m => !m.hidden && impNorm(m.name) === n)
+    || STATE.members.find(m => !m.hidden && impNorm(m.name).startsWith(n))
+    || null;
+}
+
+function impMatchCategory(v) {
+  if (!v) return null;
+  const n = impNorm(v);
+  const c = CATEGORIES.find(c =>
+    c.id === n || impNorm(c.name) === n || impNorm(c.short) === n);
+  return c ? c.id : null;
+}
+
+// Normalisasi 1 row mentah → { ok, warn:[], skipReason, task fields }
+function impNormalizeRow(raw, defaults) {
+  const warn = [];
+  const title = String(impPickField(raw, 'title') || '').trim();
+  if (!title) return { ok: false, skipReason: 'Judul kosong', raw };
+
+  let date = impParseDate(impPickField(raw, 'date'));
+  if (date === 'INVALID') return { ok: false, skipReason: `Tanggal tidak valid: "${impPickField(raw, 'date')}"`, raw, title };
+  if (!date) { date = defaults.date; warn.push('tanggal → default'); }
+
+  let member = impMatchMember(impPickField(raw, 'assignee'));
+  if (!member) {
+    const rawName = impPickField(raw, 'assignee');
+    member = STATE.members.find(m => m.id === defaults.assigneeId) || null;
+    if (!member) return { ok: false, skipReason: 'Pelaksana tidak dikenal & default kosong', raw, title };
+    if (rawName) warn.push(`pelaksana "${rawName}" tidak dikenal → ${member.name}`);
+    else warn.push(`pelaksana → ${member.name}`);
+  }
+
+  let category = impMatchCategory(impPickField(raw, 'category'));
+  if (!category) {
+    const rawCat = impPickField(raw, 'category');
+    category = defaults.category;
+    if (rawCat) warn.push(`kategori "${rawCat}" tidak dikenal → default`);
+    else warn.push('kategori → default');
+  }
+
+  const isProject = impParseBool(impPickField(raw, 'isProject'));
+  let dueDate = impParseDate(impPickField(raw, 'dueDate') || impPickField(raw, 'projectTo'));
+  if (dueDate === 'INVALID') { dueDate = null; warn.push('deadline tidak valid → dikosongkan'); }
+  if (isProject) {
+    if (!dueDate || dueDate < date) { dueDate = date; warn.push('range proyek tidak valid → 1 hari'); }
+  }
+
+  const target = Math.max(0, Math.round(Number(impPickField(raw, 'target')) || 0));
+
+  return {
+    ok: true, warn, title, date, dueDate,
+    startTime: impParseTime(impPickField(raw, 'startTime')),
+    endTime: impParseTime(impPickField(raw, 'endTime')),
+    description: String(impPickField(raw, 'description') || '').trim(),
+    target,
+    isShared: impParseBool(impPickField(raw, 'shared')),
+    isProject,
+    assigneeId: member.id, assigneeName: member.name,
+    category,
+    checklists: impParseChecklist(impPickField(raw, 'checklist')),
+  };
+}
+
+// Parse text paste → array of row objects. JSON dulu, fallback CSV.
+function impParseText(text) {
+  const t = text.trim();
+  if (!t) return [];
+  if (t[0] === '[' || t[0] === '{') {
+    const j = JSON.parse(t);
+    if (Array.isArray(j)) return j;
+    if (Array.isArray(j.tasks)) return j.tasks;
+    if (Array.isArray(j.tugas)) return j.tugas;
+    throw new Error('JSON harus array tugas, atau objek dengan key "tasks"');
+  }
+  // CSV via SheetJS
+  const wb = XLSX.read(t, { type: 'string' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet, { defval: '' });
+}
+
+async function impParseFile(file) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.json')) {
+    return impParseText(await file.text());
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  // Pakai sheet pertama yang bukan "PETUNJUK"
+  const sheetName = wb.SheetNames.find(n => impNorm(n) !== 'petunjuk') || wb.SheetNames[0];
+  return XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
+}
+
+function impGetDefaults() {
+  return {
+    date: document.getElementById('imp-def-date')?.value || todayStr(),
+    assigneeId: document.getElementById('imp-def-assignee')?.value || STATE.currentMember?.id,
+    category: document.getElementById('imp-def-category')?.value || 'b2c',
+  };
+}
+
+function impRenderPreview() {
+  const box = document.getElementById('imp-preview');
+  if (!box) return;
+  if (!IMP_STATE || !IMP_STATE.rows.length) {
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:14px;text-align:center">Belum ada data — upload file atau paste di atas, lalu klik "Baca Data".</div>';
+    document.getElementById('imp-go').disabled = true;
+    return;
+  }
+  const defaults = impGetDefaults();
+  const normed = IMP_STATE.rows.map(r => impNormalizeRow(r, defaults));
+  IMP_STATE.normed = normed;
+  const okCount = normed.filter(n => n.ok).length;
+  const skipCount = normed.length - okCount;
+
+  const rowsHtml = normed.map((n, i) => {
+    if (!n.ok) {
+      return `<tr style="opacity:.6">
+        <td>${i + 1}</td>
+        <td>${escapeHtml(n.title || '(tanpa judul)')}</td>
+        <td colspan="5" style="color:var(--danger)">LEWATI — ${escapeHtml(n.skipReason)}</td>
+      </tr>`;
+    }
+    const cat = CATEGORIES.find(c => c.id === n.category);
+    const clCount = n.checklists.reduce((a, cl) => a + cl.items.length, 0);
+    return `<tr>
+      <td>${i + 1}</td>
+      <td><b>${escapeHtml(n.title)}</b>${n.isProject ? ' <span style="font-size:10px;color:var(--primary)">[PROYEK]</span>' : ''}${n.isShared ? ' <span style="font-size:10px;color:#2563eb">[BERSAMA]</span>' : ''}</td>
+      <td>${n.date}${n.isProject && n.dueDate ? ' → ' + n.dueDate : ''}</td>
+      <td>${escapeHtml(n.assigneeName)}</td>
+      <td>${cat ? escapeHtml(cat.short) : '-'}</td>
+      <td>${n.startTime ? `${n.startTime}${n.endTime ? '-' + n.endTime : ''}` : '-'}${clCount ? ` · ✓${clCount}` : ''}${n.target ? ` · T:${n.target}` : ''}</td>
+      <td style="font-size:11px;color:${n.warn.length ? '#b45309' : 'var(--success)'}">${n.warn.length ? escapeHtml(n.warn.join('; ')) : 'OK'}</td>
+    </tr>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div style="font-size:13px;margin-bottom:8px">
+      <b>${okCount}</b> tugas siap import${skipCount ? ` · <span style="color:var(--danger)">${skipCount} dilewati</span>` : ''}
+      ${IMP_STATE.fileName ? ` · sumber: ${escapeHtml(IMP_STATE.fileName)}` : ''}
+    </div>
+    <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="position:sticky;top:0;background:var(--bg-col)">
+          <th style="padding:6px">#</th><th style="padding:6px;text-align:left">Judul</th>
+          <th style="padding:6px">Tanggal</th><th style="padding:6px">Pelaksana</th>
+          <th style="padding:6px">Kat</th><th style="padding:6px">Jam/Info</th>
+          <th style="padding:6px;text-align:left">Validasi</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+  const go = document.getElementById('imp-go');
+  go.disabled = okCount === 0;
+  go.textContent = okCount > 0 ? `📥 Import ${okCount} Tugas` : '📥 Import';
+}
+
+async function impExecute() {
+  if (!IMP_STATE || !IMP_STATE.normed) return;
+  const me = STATE.currentMember;
+  const valid = IMP_STATE.normed.filter(n => n.ok);
+  if (!valid.length) return;
+  const go = document.getElementById('imp-go');
+  go.disabled = true;
+  let done = 0, failed = 0;
+  for (const n of valid) {
+    go.textContent = `Mengimpor ${done + 1}/${valid.length}...`;
+    try {
+      await addDoc(collection(STATE.db, 'tasks'), {
+        title: n.title, description: n.description, status: 'todo', progress: 0,
+        date: n.date, dueDate: n.dueDate,
+        startTime: n.startTime, endTime: n.endTime,
+        target: n.target, progressCount: 0,
+        assigneeId: n.assigneeId, assigneeName: n.assigneeName,
+        isShared: n.isShared, isProject: n.isProject,
+        boardId: STATE.currentBoardId,
+        category: n.category, labelIds: [], checklists: n.checklists,
+        createdById: me.id, createdByName: me.name,
+        fromImport: true,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(), completedAt: null,
+        comments: [],
+        activity: [{ id: uid(), type: 'created', byId: me.id, byName: me.name, at: new Date().toISOString() }],
+      });
+      done++;
+    } catch (err) {
+      console.error('import row gagal:', n.title, err);
+      failed++;
+    }
+  }
+  toast(failed ? `Import: ${done} berhasil, ${failed} GAGAL (cek koneksi)` : `${done} tugas berhasil diimpor`, failed ? 'error' : 'success');
+  if (!failed) closeModal();
+  else impRenderPreview();
+}
+
+function impDownloadTemplate() {
+  if (typeof XLSX === 'undefined') { toast('SheetJS belum loaded', 'error'); return; }
+  const wb = XLSX.utils.book_new();
+  const header = ['Judul', 'Tanggal', 'Pelaksana', 'Kategori', 'Jam Mulai', 'Jam Selesai', 'Deadline', 'Target', 'Tugas Bersama', 'Checklist', 'Deskripsi'];
+  const contoh = [
+    ['FU pesanan TikTok Shop', todayStr(), STATE.members[0]?.name || 'Panji', 'Online', '09:00', '10:00', '', 0, '', 'Cek pesanan baru; Balas chat; Update resi', 'Rutin pagi'],
+    ['Rekap penolakan outlet', shiftDate(todayStr(), 1), STATE.members[0]?.name || 'Panji', 'Optimize Process', '', '', shiftDate(todayStr(), 3), 5, 'Ya', '', 'Target 5 outlet'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([header, ...contoh]);
+  ws['!cols'] = header.map((h, i) => ({ wch: i === 0 ? 32 : (i === 9 || i === 10 ? 36 : 14) }));
+  XLSX.utils.book_append_sheet(wb, ws, 'TUGAS');
+  const petunjuk = [
+    ['PETUNJUK IMPORT TUGAS — Team Tracker'],
+    [''],
+    ['Kolom wajib: Judul. Kolom lain opsional (pakai default kalau kosong).'],
+    ['Tanggal / Deadline: format YYYY-MM-DD (mis. 2026-09-24) atau DD/MM/YYYY.'],
+    ['Pelaksana: nama anggota persis seperti di app (' + STATE.members.filter(m => !m.hidden).map(m => m.name).join(', ') + ').'],
+    ['Kategori: B2C / Online / Optimize Process.'],
+    ['Jam: format HH:MM (mis. 09:00).'],
+    ['Tugas Bersama: isi "Ya" kalau tugas dikerjakan bareng.'],
+    ['Checklist: daftar langkah dipisah titik-koma ( ; ).'],
+    ['Target: angka target harian (0 = tanpa target).'],
+    ['Semua tugas masuk berstatus TODO (rencana).'],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(petunjuk.map(r => [r[0]])), 'PETUNJUK');
+  XLSX.writeFile(wb, 'template_import_tugas.xlsx');
+}
+
+function openImportModal() {
+  IMP_STATE = null;
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">📥 Import Tugas</div>
+      <button class="modal-close" data-close-modal>×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:12px;color:var(--text-muted);font-size:13px">
+        Import banyak tugas sekaligus dari file <b>Excel / CSV / JSON</b> — atau paste langsung
+        hasil dari Claude. Semua tugas masuk berstatus <b>TODO</b>.
+      </p>
+
+      <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:12px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="file" id="imp-file" accept=".xlsx,.xls,.csv,.json" style="font-size:12px;flex:1;min-width:200px">
+          <button class="btn btn-ghost btn-sm" id="imp-template">⬇️ Template Excel</button>
+        </div>
+        <div style="margin:10px 0 6px;font-size:12px;color:var(--text-muted)">atau paste JSON/CSV di sini:</div>
+        <textarea id="imp-paste" class="input" rows="4" placeholder='[{"judul":"FU TikTok Shop","tanggal":"${todayStr()}","pelaksana":"...","kategori":"online","checklist":["cek pesanan","balas chat"]}]' style="font-family:monospace;font-size:11px;width:100%"></textarea>
+        <button class="btn btn-secondary btn-sm" id="imp-read" style="margin-top:8px">🔍 Baca Data</button>
+      </div>
+
+      <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:12px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px">Default (dipakai kalau kolom kosong)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div class="form-group" style="margin:0">
+            <label class="label">Tanggal</label>
+            <input type="date" id="imp-def-date" class="input" value="${todayStr()}">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="label">Pelaksana</label>
+            <select id="imp-def-assignee" class="select">
+              ${STATE.members.filter(m => !m.hidden).map(m => `<option value="${m.id}" ${m.id === STATE.currentMember?.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="label">Kategori</label>
+            <select id="imp-def-category" class="select">
+              ${CATEGORIES.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="imp-preview"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Batal</button>
+      <button class="btn btn-primary" id="imp-go" disabled>📥 Import</button>
+    </div>
+  `);
+
+  impRenderPreview();
+
+  document.getElementById('imp-template').addEventListener('click', impDownloadTemplate);
+
+  async function readData() {
+    const fileEl = document.getElementById('imp-file');
+    const pasteEl = document.getElementById('imp-paste');
+    try {
+      let rows = [];
+      let fileName = null;
+      if (fileEl.files && fileEl.files[0]) {
+        rows = await impParseFile(fileEl.files[0]);
+        fileName = fileEl.files[0].name;
+      } else if (pasteEl.value.trim()) {
+        rows = impParseText(pasteEl.value);
+        fileName = '(paste)';
+      } else {
+        toast('Pilih file dulu, atau paste datanya', 'error');
+        return;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        toast('Data kosong / tidak terbaca', 'error');
+        return;
+      }
+      if (rows.length > 200) {
+        toast(`Maksimal 200 tugas per import (file berisi ${rows.length})`, 'error');
+        return;
+      }
+      IMP_STATE = { rows, fileName };
+      impRenderPreview();
+    } catch (err) {
+      toast('Gagal baca data: ' + err.message, 'error');
+    }
+  }
+  document.getElementById('imp-read').addEventListener('click', readData);
+  document.getElementById('imp-file').addEventListener('change', readData);
+
+  ['imp-def-date', 'imp-def-assignee', 'imp-def-category'].forEach(id => {
+    document.getElementById(id).addEventListener('change', impRenderPreview);
+  });
+
+  document.getElementById('imp-go').addEventListener('click', impExecute);
+}
+
 function openExportModal() {
   showModal(`
     <div class="modal-header">
@@ -13002,7 +13423,7 @@ function buildExportObject(d) {
   return {
     export_meta: {
       exported_at: new Date().toISOString(),
-      app_version: 'v2.63',
+      app_version: 'v2.64',
       range: { from: d.from, to: d.to },
       filter_member: d.memberLabel,
       filter_category: d.categoryFilter || 'Semua',
