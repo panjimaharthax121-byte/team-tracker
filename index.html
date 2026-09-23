@@ -12943,9 +12943,14 @@ function impNormalizeRow(raw, defaults) {
   // Tugas selesai/proses butuh jam biar nempel di Kalender Kerja — default kalau kosong
   if (status === 'done' || status === 'proses') {
     if (!startTime && endTime) { startTime = impAddMinutes(endTime, -60); }
-    if (!startTime) { startTime = '12:00'; warn.push('tanpa jam → dianggap 12:00'); }
+    if (!startTime) { startTime = '08:00'; warn.push('tanpa jam → dianggap 08:00'); }
     if (!endTime) { endTime = impAddMinutes(startTime, 60); }
     if (endTime <= startTime) { endTime = impAddMinutes(startTime, 60); warn.push('jam selesai <= mulai → +1 jam'); }
+    // Slot 12.00-13.00 di Kalender Kerja = MAKAN SIANG — tugas yang seluruh jamnya
+    // di situ gak bakal keliatan. Kasih tau user biar geser jam.
+    if (startTime >= '12:00' && endTime <= '13:00') {
+      warn.push('jam 12-13 = slot makan siang, tidak tampil di Kalender Kerja — geser jamnya');
+    }
   }
 
   return {
@@ -13169,7 +13174,8 @@ function impDownloadTemplate() {
     ['Checklist: daftar langkah dipisah titik-koma ( ; ).'],
     ['Target: angka target harian (0 = tanpa target).'],
     ['Status: Selesai / Proses / Todo. Kosong = pakai default di modal (Selesai).'],
-    ['Tugas Selesai/Proses WAJIB punya jam biar akurat di Kalender Kerja (tanpa jam = dianggap 12:00).'],
+    ['Tugas Selesai/Proses WAJIB punya jam biar akurat di Kalender Kerja (tanpa jam = dianggap 08:00).'],
+    ['Hindari jam 12:00-13:00 penuh — itu slot MAKAN SIANG di kalender, tugasnya tidak tampil.'],
     ['Tugas Selesai otomatis: checklist tercentang semua, progress 100%, tercatat di jam kerja.'],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(petunjuk.map(r => [r[0]])), 'PETUNJUK');
