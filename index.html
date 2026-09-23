@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Team Tracker v2.64 — ApotekKu</title>
+<title>Team Tracker v2.65 — ApotekKu</title>
 <!-- v2.32: SheetJS untuk export Kalender Kerja Bulanan ke Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- v2.47: Chart.js untuk Dashboard analytics -->
@@ -2840,7 +2840,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
 import {
   getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, deleteDoc,
-  onSnapshot, query, where, orderBy, limit, serverTimestamp, updateDoc, arrayUnion, arrayRemove
+  onSnapshot, query, where, orderBy, limit, serverTimestamp, updateDoc, arrayUnion, arrayRemove, Timestamp
 } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
 // v2.49: Berkas Penting sekarang LINK-BASED (Google Drive / Dropbox / dll) — Firebase Storage tidak dipakai lagi
 
@@ -12790,7 +12790,24 @@ const IMP_ALIASES = {
   checklist:   ['checklist', 'checklists', 'subtugas', 'langkah'],
   isProject:   ['proyek', 'isproject', 'project'],
   projectTo:   ['projectto', 'proyeksampai', 'tanggalselesaiproyek'],
+  status:      ['status', 'keterangan', 'hasil'],
 };
+
+// v2.65 — status import: selesai (default) / proses / todo
+function impParseStatus(v) {
+  if (v == null || v === '') return null;
+  const s = impNorm(v);
+  if (['selesai', 'done', 'beres', 'kelar', 'sudah', 'complete', 'completed'].includes(s)) return 'done';
+  if (['proses', 'ongoing', 'jalan', 'berjalan', 'progress', 'in progress'].includes(s)) return 'proses';
+  if (['todo', 'rencana', 'belum', 'plan', 'pending'].includes(s)) return 'todo';
+  return 'UNKNOWN';
+}
+
+function impAddMinutes(hhmm, mins) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = Math.min(23 * 60 + 59, h * 60 + m + mins);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
 
 function impPickField(rowObj, field) {
   const keys = Object.keys(rowObj);
@@ -12913,10 +12930,28 @@ function impNormalizeRow(raw, defaults) {
 
   const target = Math.max(0, Math.round(Number(impPickField(raw, 'target')) || 0));
 
+  // v2.65 — status per baris; fallback ke default modal
+  let status = impParseStatus(impPickField(raw, 'status'));
+  if (status === 'UNKNOWN') {
+    warn.push(`status "${impPickField(raw, 'status')}" tidak dikenal → default`);
+    status = null;
+  }
+  if (!status) status = defaults.status;
+
+  let startTime = impParseTime(impPickField(raw, 'startTime'));
+  let endTime = impParseTime(impPickField(raw, 'endTime'));
+  // Tugas selesai/proses butuh jam biar nempel di Kalender Kerja — default kalau kosong
+  if (status === 'done' || status === 'proses') {
+    if (!startTime && endTime) { startTime = impAddMinutes(endTime, -60); }
+    if (!startTime) { startTime = '12:00'; warn.push('tanpa jam → dianggap 12:00'); }
+    if (!endTime) { endTime = impAddMinutes(startTime, 60); }
+    if (endTime <= startTime) { endTime = impAddMinutes(startTime, 60); warn.push('jam selesai <= mulai → +1 jam'); }
+  }
+
   return {
     ok: true, warn, title, date, dueDate,
-    startTime: impParseTime(impPickField(raw, 'startTime')),
-    endTime: impParseTime(impPickField(raw, 'endTime')),
+    status,
+    startTime, endTime,
     description: String(impPickField(raw, 'description') || '').trim(),
     target,
     isShared: impParseBool(impPickField(raw, 'shared')),
@@ -12924,6 +12959,67 @@ function impNormalizeRow(raw, defaults) {
     assigneeId: member.id, assigneeName: member.name,
     category,
     checklists: impParseChecklist(impPickField(raw, 'checklist')),
+  };
+}
+
+// v2.65 — bangun dokumen task utuh dari row ternormalisasi.
+// Untuk done/proses: sintesis timeLog (epoch ms lokal) + activity kronologis + completedAt
+// → Kalender Kerja/Rekap/Dashboard baca dia PERSIS kayak tugas yang dikerjain lewat app.
+function impBuildTaskDoc(n, me) {
+  const startMs = new Date(`${n.date}T${n.startTime || '12:00'}:00`).getTime();
+  const endMs = new Date(`${n.date}T${n.endTime || impAddMinutes(n.startTime || '12:00', 60)}:00`).getTime();
+  const isDone = n.status === 'done';
+  const isProses = n.status === 'proses';
+
+  const actLocal = (hhmm) => `${n.date}T${hhmm}:00`; // ISO lokal — sortable & slice(0,10) = tanggal
+  const activity = [{
+    id: uid(), type: 'created', byId: me.id, byName: me.name,
+    at: (isDone || isProses) ? actLocal(n.startTime) : new Date().toISOString(),
+  }];
+  let timeLog = [];
+  if (isDone || isProses) {
+    activity.push({
+      id: uid(), type: 'status_changed', from: 'todo', to: 'proses',
+      byId: n.assigneeId, byName: n.assigneeName, at: actLocal(n.startTime),
+    });
+    timeLog = [{
+      id: uid(), memberId: n.assigneeId, memberName: n.assigneeName,
+      startedAt: startMs, endedAt: endMs,
+      duration: Math.min(endMs - startMs, TIMETRACK_CAP_MS),
+      auto: false, imported: true,
+    }];
+  }
+  if (isDone) {
+    activity.push({
+      id: uid(), type: 'status_changed', from: 'proses', to: 'done',
+      byId: n.assigneeId, byName: n.assigneeName, at: actLocal(n.endTime),
+    });
+  }
+
+  // Tugas selesai: checklist ikut selesai + progress penuh (lolos aturan checklist 100%)
+  const checklists = isDone
+    ? n.checklists.map(cl => ({ ...cl, items: cl.items.map(it => ({ ...it, done: true })) }))
+    : n.checklists;
+
+  return {
+    title: n.title, description: n.description,
+    status: n.status,
+    progress: isDone ? 100 : 0,
+    date: n.date, dueDate: n.dueDate,
+    startTime: n.startTime, endTime: n.endTime,
+    target: n.target,
+    progressCount: isDone ? n.target : 0,
+    assigneeId: n.assigneeId, assigneeName: n.assigneeName,
+    isShared: n.isShared, isProject: n.isProject,
+    boardId: STATE.currentBoardId,
+    category: n.category, labelIds: [], checklists,
+    createdById: me.id, createdByName: me.name,
+    fromImport: true,
+    timeLog,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    completedAt: isDone ? Timestamp.fromMillis(endMs) : null,
+    comments: [],
+    activity,
   };
 }
 
@@ -12961,6 +13057,7 @@ function impGetDefaults() {
     date: document.getElementById('imp-def-date')?.value || todayStr(),
     assigneeId: document.getElementById('imp-def-assignee')?.value || STATE.currentMember?.id,
     category: document.getElementById('imp-def-category')?.value || 'b2c',
+    status: document.getElementById('imp-def-status')?.value || 'done',
   };
 }
 
@@ -12983,17 +13080,23 @@ function impRenderPreview() {
       return `<tr style="opacity:.6">
         <td>${i + 1}</td>
         <td>${escapeHtml(n.title || '(tanpa judul)')}</td>
-        <td colspan="5" style="color:var(--danger)">LEWATI — ${escapeHtml(n.skipReason)}</td>
+        <td colspan="6" style="color:var(--danger)">LEWATI — ${escapeHtml(n.skipReason)}</td>
       </tr>`;
     }
     const cat = CATEGORIES.find(c => c.id === n.category);
     const clCount = n.checklists.reduce((a, cl) => a + cl.items.length, 0);
+    const stBadge = n.status === 'done'
+      ? '<span style="color:var(--success);font-weight:700">SELESAI</span>'
+      : n.status === 'proses'
+        ? '<span style="color:#b45309;font-weight:700">PROSES</span>'
+        : '<span style="color:var(--text-muted)">TODO</span>';
     return `<tr>
       <td>${i + 1}</td>
       <td><b>${escapeHtml(n.title)}</b>${n.isProject ? ' <span style="font-size:10px;color:var(--primary)">[PROYEK]</span>' : ''}${n.isShared ? ' <span style="font-size:10px;color:#2563eb">[BERSAMA]</span>' : ''}</td>
       <td>${n.date}${n.isProject && n.dueDate ? ' → ' + n.dueDate : ''}</td>
       <td>${escapeHtml(n.assigneeName)}</td>
       <td>${cat ? escapeHtml(cat.short) : '-'}</td>
+      <td>${stBadge}</td>
       <td>${n.startTime ? `${n.startTime}${n.endTime ? '-' + n.endTime : ''}` : '-'}${clCount ? ` · ✓${clCount}` : ''}${n.target ? ` · T:${n.target}` : ''}</td>
       <td style="font-size:11px;color:${n.warn.length ? '#b45309' : 'var(--success)'}">${n.warn.length ? escapeHtml(n.warn.join('; ')) : 'OK'}</td>
     </tr>`;
@@ -13009,7 +13112,7 @@ function impRenderPreview() {
         <thead><tr style="position:sticky;top:0;background:var(--bg-col)">
           <th style="padding:6px">#</th><th style="padding:6px;text-align:left">Judul</th>
           <th style="padding:6px">Tanggal</th><th style="padding:6px">Pelaksana</th>
-          <th style="padding:6px">Kat</th><th style="padding:6px">Jam/Info</th>
+          <th style="padding:6px">Kat</th><th style="padding:6px">Status</th><th style="padding:6px">Jam/Info</th>
           <th style="padding:6px;text-align:left">Validasi</th>
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -13031,21 +13134,7 @@ async function impExecute() {
   for (const n of valid) {
     go.textContent = `Mengimpor ${done + 1}/${valid.length}...`;
     try {
-      await addDoc(collection(STATE.db, 'tasks'), {
-        title: n.title, description: n.description, status: 'todo', progress: 0,
-        date: n.date, dueDate: n.dueDate,
-        startTime: n.startTime, endTime: n.endTime,
-        target: n.target, progressCount: 0,
-        assigneeId: n.assigneeId, assigneeName: n.assigneeName,
-        isShared: n.isShared, isProject: n.isProject,
-        boardId: STATE.currentBoardId,
-        category: n.category, labelIds: [], checklists: n.checklists,
-        createdById: me.id, createdByName: me.name,
-        fromImport: true,
-        createdAt: serverTimestamp(), updatedAt: serverTimestamp(), completedAt: null,
-        comments: [],
-        activity: [{ id: uid(), type: 'created', byId: me.id, byName: me.name, at: new Date().toISOString() }],
-      });
+      await addDoc(collection(STATE.db, 'tasks'), impBuildTaskDoc(n, me));
       done++;
     } catch (err) {
       console.error('import row gagal:', n.title, err);
@@ -13060,10 +13149,10 @@ async function impExecute() {
 function impDownloadTemplate() {
   if (typeof XLSX === 'undefined') { toast('SheetJS belum loaded', 'error'); return; }
   const wb = XLSX.utils.book_new();
-  const header = ['Judul', 'Tanggal', 'Pelaksana', 'Kategori', 'Jam Mulai', 'Jam Selesai', 'Deadline', 'Target', 'Tugas Bersama', 'Checklist', 'Deskripsi'];
+  const header = ['Judul', 'Tanggal', 'Status', 'Pelaksana', 'Kategori', 'Jam Mulai', 'Jam Selesai', 'Deadline', 'Target', 'Tugas Bersama', 'Checklist', 'Deskripsi'];
   const contoh = [
-    ['FU pesanan TikTok Shop', todayStr(), STATE.members[0]?.name || 'Panji', 'Online', '09:00', '10:00', '', 0, '', 'Cek pesanan baru; Balas chat; Update resi', 'Rutin pagi'],
-    ['Rekap penolakan outlet', shiftDate(todayStr(), 1), STATE.members[0]?.name || 'Panji', 'Optimize Process', '', '', shiftDate(todayStr(), 3), 5, 'Ya', '', 'Target 5 outlet'],
+    ['FU pesanan TikTok Shop', todayStr(), 'Selesai', STATE.members[0]?.name || 'Panji', 'Online', '09:00', '10:00', '', 0, '', 'Cek pesanan baru; Balas chat; Update resi', 'Rutin pagi'],
+    ['Rekap penolakan outlet', shiftDate(todayStr(), 1), 'Todo', STATE.members[0]?.name || 'Panji', 'Optimize Process', '', '', shiftDate(todayStr(), 3), 5, 'Ya', '', 'Target 5 outlet'],
   ];
   const ws = XLSX.utils.aoa_to_sheet([header, ...contoh]);
   ws['!cols'] = header.map((h, i) => ({ wch: i === 0 ? 32 : (i === 9 || i === 10 ? 36 : 14) }));
@@ -13079,7 +13168,9 @@ function impDownloadTemplate() {
     ['Tugas Bersama: isi "Ya" kalau tugas dikerjakan bareng.'],
     ['Checklist: daftar langkah dipisah titik-koma ( ; ).'],
     ['Target: angka target harian (0 = tanpa target).'],
-    ['Semua tugas masuk berstatus TODO (rencana).'],
+    ['Status: Selesai / Proses / Todo. Kosong = pakai default di modal (Selesai).'],
+    ['Tugas Selesai/Proses WAJIB punya jam biar akurat di Kalender Kerja (tanpa jam = dianggap 12:00).'],
+    ['Tugas Selesai otomatis: checklist tercentang semua, progress 100%, tercatat di jam kerja.'],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(petunjuk.map(r => [r[0]])), 'PETUNJUK');
   XLSX.writeFile(wb, 'template_import_tugas.xlsx');
@@ -13095,7 +13186,8 @@ function openImportModal() {
     <div class="modal-body">
       <p style="margin-bottom:12px;color:var(--text-muted);font-size:13px">
         Import banyak tugas sekaligus dari file <b>Excel / CSV / JSON</b> — atau paste langsung
-        hasil dari Claude. Semua tugas masuk berstatus <b>TODO</b>.
+        hasil dari Claude. Tugas <b>SELESAI</b>/<b>PROSES</b> otomatis masuk ke <b>Kalender Kerja</b>
+        di jam-nya (lengkap dengan catatan waktu kerja) — cocok buat nyatat tugas yang lupa dibikin.
       </p>
 
       <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:12px">
@@ -13104,13 +13196,21 @@ function openImportModal() {
           <button class="btn btn-ghost btn-sm" id="imp-template">⬇️ Template Excel</button>
         </div>
         <div style="margin:10px 0 6px;font-size:12px;color:var(--text-muted)">atau paste JSON/CSV di sini:</div>
-        <textarea id="imp-paste" class="input" rows="4" placeholder='[{"judul":"FU TikTok Shop","tanggal":"${todayStr()}","pelaksana":"...","kategori":"online","checklist":["cek pesanan","balas chat"]}]' style="font-family:monospace;font-size:11px;width:100%"></textarea>
+        <textarea id="imp-paste" class="input" rows="4" placeholder='[{"judul":"FU TikTok Shop","tanggal":"${todayStr()}","status":"selesai","jam_mulai":"09:00","jam_selesai":"10:00","pelaksana":"...","kategori":"online","checklist":["cek pesanan","balas chat"]}]' style="font-family:monospace;font-size:11px;width:100%"></textarea>
         <button class="btn btn-secondary btn-sm" id="imp-read" style="margin-top:8px">🔍 Baca Data</button>
       </div>
 
       <div style="background:var(--bg-col);padding:12px 14px;border-radius:var(--radius);margin-bottom:12px">
         <div style="font-weight:600;font-size:13px;margin-bottom:8px">Default (dipakai kalau kolom kosong)</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">
+          <div class="form-group" style="margin:0">
+            <label class="label">Status</label>
+            <select id="imp-def-status" class="select">
+              <option value="done" selected>Selesai</option>
+              <option value="proses">Proses</option>
+              <option value="todo">Todo (rencana)</option>
+            </select>
+          </div>
           <div class="form-group" style="margin:0">
             <label class="label">Tanggal</label>
             <input type="date" id="imp-def-date" class="input" value="${todayStr()}">
@@ -13175,7 +13275,7 @@ function openImportModal() {
   document.getElementById('imp-read').addEventListener('click', readData);
   document.getElementById('imp-file').addEventListener('change', readData);
 
-  ['imp-def-date', 'imp-def-assignee', 'imp-def-category'].forEach(id => {
+  ['imp-def-date', 'imp-def-assignee', 'imp-def-category', 'imp-def-status'].forEach(id => {
     document.getElementById(id).addEventListener('change', impRenderPreview);
   });
 
@@ -13423,7 +13523,7 @@ function buildExportObject(d) {
   return {
     export_meta: {
       exported_at: new Date().toISOString(),
-      app_version: 'v2.64',
+      app_version: 'v2.65',
       range: { from: d.from, to: d.to },
       filter_member: d.memberLabel,
       filter_category: d.categoryFilter || 'Semua',
